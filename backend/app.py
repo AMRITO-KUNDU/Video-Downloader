@@ -4,10 +4,10 @@ import yt_dlp
 import subprocess
 import os
 import re
-import shlex
+import signal
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 YOUTUBE_RE = re.compile(
     r'(https?://)?(www\.)?(youtube\.com/(watch\?|shorts/|embed/|v/)|youtu\.be/)'
@@ -27,6 +27,7 @@ BASE_OPTS = {
 }
 
 CHUNK_SIZE = 1024 * 256  # 256 KB chunks
+FFMPEG_TIMEOUT = 3600    # 1 hour max per download
 
 STATIC_DIR = os.environ.get(
     "STATIC_DIR",
@@ -107,7 +108,6 @@ def _best_audio_url(info):
     ]
     if not audio_formats:
         return None
-    # Prefer m4a (AAC) for clean copy-mux into MP4
     m4a = [f for f in audio_formats if f.get('ext') == 'm4a']
     pool = m4a if m4a else audio_formats
     best = max(pool, key=lambda f: f.get('abr') or f.get('tbr') or 0)
@@ -170,6 +170,7 @@ def get_video_info():
 
 @app.route('/api/youtube/download', methods=['GET', 'POST'])
 def download_video():
+    proc = None
     try:
         if request.method == 'GET':
             url = request.args.get('url', '').strip()
@@ -184,11 +185,9 @@ def download_video():
         if not YOUTUBE_RE.search(url):
             return jsonify({'error': 'Please enter a valid YouTube URL.'}), 400
 
-        # Step 1: extract CDN stream URLs via yt-dlp — no downloading
         with yt_dlp.YoutubeDL({**BASE_OPTS}) as ydl:
             info = ydl.extract_info(url, download=False)
 
-        # Find the selected video format
         fmt = next(
             (f for f in info.get('formats', []) if f.get('format_id') == format_id),
             None,
@@ -203,22 +202,15 @@ def download_video():
         title = re.sub(r'[^\w\s\-.]', '', info.get('title', 'video'))[:80].strip()
         filename = f"{title}.mp4"
 
-        # Step 2: build ffmpeg command that pulls from CDN URLs and pipes to stdout
-        # -headers must come before each -i to pass User-Agent to each request
         ua_header = f"User-Agent: {USER_AGENT}\r\n"
         cmd = ['ffmpeg', '-y']
 
-        # Video input
         cmd += ['-headers', ua_header, '-i', video_url]
 
-        # Audio input (separate stream, if needed)
         if audio_url:
             cmd += ['-headers', ua_header, '-i', audio_url]
 
-        # Map + encode: copy both streams, output fragmented MP4 to stdout
-        cmd += [
-            '-map', '0:v:0',
-        ]
+        cmd += ['-map', '0:v:0']
         if audio_url:
             cmd += ['-map', '1:a:0']
         elif video_has_audio:
@@ -226,21 +218,18 @@ def download_video():
 
         cmd += [
             '-c:v', 'copy',
-            # Always re-encode audio to AAC so any input codec (opus, vorbis, mp3)
-            # muxes cleanly into the MP4 container — zero risk of stream rejection.
             '-c:a', 'aac',
             '-b:a', '128k',
             '-f', 'mp4',
-            # frag_keyframe+empty_moov makes MP4 streamable without seeking
             '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
             'pipe:1',
         ]
 
-        # Step 3: spawn ffmpeg, pipe stdout directly to the HTTP response
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
+            start_new_session=True,
         )
 
         def generate():
@@ -251,7 +240,11 @@ def download_video():
                         break
                     yield chunk
             finally:
-                proc.stdout.close()
+                try:
+                    proc.stdout.close()
+                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                except Exception:
+                    pass
                 proc.wait()
 
         headers = {
@@ -269,6 +262,11 @@ def download_video():
         )
 
     except Exception as e:
+        if proc:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                pass
         return jsonify({'error': f'Download failed: {str(e)}'}), 500
 
 
@@ -280,7 +278,7 @@ def serve_frontend(path):
 
     index_path = os.path.join(STATIC_DIR, "index.html")
     if not os.path.exists(index_path):
-        return "Frontend not built. Build the React app first.", 404
+        return "Frontend not built yet. Run the start script first.", 503
 
     file_path = os.path.join(STATIC_DIR, path)
     if path and os.path.exists(file_path):
@@ -290,5 +288,5 @@ def serve_frontend(path):
 
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PYTHON_PORT', 5001))
+    port = int(os.environ.get('PORT', os.environ.get('PYTHON_PORT', 5000)))
     app.run(host='0.0.0.0', port=port, debug=False, threaded=True)
