@@ -1,9 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: 'Inter', sans-serif;
-  --font-display: 'Outfit', sans-serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-display: 'Inter', system-ui, sans-serif;
 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -23,31 +23,31 @@
 }
 
 :root {
-  /* Enforced Dark Professional Theme with Red Accents */
-  --background: 240 10% 4%;
-  --foreground: 0 0% 98%;
-  
-  --card: 240 10% 6%;
-  --card-foreground: 0 0% 98%;
-  
-  --border: 240 10% 12%;
-  --input: 240 10% 12%;
-  
-  --primary: 0 84% 60%; /* YouTube-ish Red */
+  /* NoteGPT-inspired light theme */
+  --background: 0 0% 100%;
+  --foreground: 222 47% 11%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+
+  --border: 220 14% 92%;
+  --input: 220 14% 96%;
+
+  --primary: 215 96% 58%;          /* #2E83FB */
   --primary-foreground: 0 0% 100%;
-  
-  --secondary: 240 10% 12%;
-  --secondary-foreground: 0 0% 98%;
-  
-  --muted: 240 10% 12%;
-  --muted-foreground: 240 5% 65%;
-  
+
+  --secondary: 220 14% 96%;
+  --secondary-foreground: 222 47% 11%;
+
+  --muted: 220 14% 96%;
+  --muted-foreground: 215 16% 47%;
+
   --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 98%;
-  
-  --ring: 0 84% 60%;
-  
-  --radius: 0.75rem;
+  --destructive-foreground: 0 0% 100%;
+
+  --ring: 215 96% 58%;
+
+  --radius: 0.625rem;
 }
 
 @layer base {
@@ -55,40 +55,43 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground font-sans antialiased selection:bg-primary/30 selection:text-primary-foreground;
-    background-image: radial-gradient(circle at 50% 0%, hsl(0 84% 60% / 0.05) 0%, transparent 50%);
+    @apply bg-background text-foreground font-sans antialiased;
+    background:
+      radial-gradient(900px 500px at 85% -10%, rgba(46,131,251,0.12), transparent 60%),
+      radial-gradient(800px 500px at -10% 10%, rgba(168,85,247,0.10), transparent 60%),
+      #ffffff;
     background-attachment: fixed;
   }
   h1, h2, h3, h4, h5, h6 {
-    @apply font-display tracking-tight;
+    @apply font-display tracking-tight text-foreground;
   }
 }
 
 @layer utilities {
-  .glass-panel {
-    @apply bg-card/60 backdrop-blur-xl border border-white/5 shadow-2xl shadow-black/50;
+  .glass-card {
+    @apply bg-white/80 backdrop-blur-xl border border-slate-200/70 shadow-[0_4px_30px_rgba(15,23,42,0.06)];
   }
-  
-  .text-gradient {
-    @apply bg-clip-text text-transparent bg-gradient-to-br from-white to-white/60;
+
+  .text-gradient-brand {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-[#2E83FB] via-[#6E59F5] to-[#A855F7];
   }
-  
-  .text-gradient-primary {
-    @apply bg-clip-text text-transparent bg-gradient-to-br from-primary to-rose-400;
+
+  .btn-glow {
+    box-shadow: 0 8px 24px -8px rgba(46,131,251,0.55);
   }
 }
 
-/* Custom scrollbar for format list */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-border rounded-full;
+  background: rgba(15, 23, 42, 0.15);
+  border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground/50;
+  background: rgba(15, 23, 42, 0.3);
 }

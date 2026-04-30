@@ -8,7 +8,10 @@ export type VideoFormat = {
   filesize: number;
 };
 
+export type VideoPlatform = "youtube" | "facebook" | "instagram";
+
 export type VideoInfo = {
+  platform: VideoPlatform;
   title: string;
   thumbnail: string;
   duration: string;
@@ -19,7 +22,7 @@ export type VideoInfo = {
 export function useGetVideoInfo() {
   return useMutation<VideoInfo, Error & { data?: any }, string>({
     mutationFn: async (url: string) => {
-      const response = await fetch("/api/youtube/video-info", {
+      const response = await fetch("/api/video/info", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),

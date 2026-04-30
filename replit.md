@@ -1,6 +1,6 @@
-# YTDownloader
+# VidGrab
 
-A full-stack YouTube video downloader built with React + Vite (frontend) and Flask + yt-dlp + ffmpeg (backend).
+A full-stack multi-platform video downloader supporting **YouTube, Facebook, and Instagram**. Built with React + Vite (frontend) and Flask + yt-dlp + ffmpeg (backend). UI design inspired by NoteGPT (light theme, blue primary `#2E83FB`, Inter font).
 
 ## Architecture
 
@@ -28,8 +28,9 @@ The "Start application" workflow runs `bash start.sh`, which:
 
 ## API Endpoints
 
-- `POST /api/youtube/video-info` — accepts `{ url }`, returns title, thumbnail, duration, uploader, and available formats
-- `GET|POST /api/youtube/download` — accepts `{ url, format_id }`, streams a fragmented MP4 response
+- `POST /api/video/info` — accepts `{ url }` (YouTube, Facebook, or Instagram), returns `{ platform, title, thumbnail, duration, uploader, formats }`
+- `GET|POST /api/video/download` — accepts `{ url, format_id }`, streams a fragmented MP4 response
+- `POST /api/youtube/video-info` and `GET|POST /api/youtube/download` — backward-compatible aliases for the legacy YouTube-only routes
 
 ## Environment Variables
 
