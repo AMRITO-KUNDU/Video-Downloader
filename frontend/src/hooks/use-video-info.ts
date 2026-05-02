@@ -6,6 +6,7 @@ export type VideoFormat = {
   label: string;
   ext: string;
   filesize: number;
+  audio_only: boolean;
 };
 
 export type VideoPlatform = "youtube" | "facebook" | "instagram";

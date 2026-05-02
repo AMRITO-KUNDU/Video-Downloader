@@ -127,8 +127,8 @@ def _get_formats(info):
     return best_per_key
 
 
-def _best_audio_url(info):
-    """Pick the best audio-only stream URL (prefers m4a/AAC)."""
+def _best_audio_format(info):
+    """Return the best audio-only format dict (prefers m4a/AAC for compatibility)."""
     audio_formats = [
         f for f in info.get('formats', [])
         if (f.get('acodec') or 'none') != 'none'
@@ -139,8 +139,27 @@ def _best_audio_url(info):
         return None
     m4a = [f for f in audio_formats if f.get('ext') == 'm4a']
     pool = m4a if m4a else audio_formats
-    best = max(pool, key=lambda f: f.get('abr') or f.get('tbr') or 0)
-    return best.get('url')
+    return max(pool, key=lambda f: f.get('abr') or f.get('tbr') or 0)
+
+
+def _classify_error(e: Exception) -> str:
+    """Map yt-dlp exceptions to human-readable messages."""
+    msg = str(e).lower()
+    if 'private video' in msg or 'private' in msg and 'video' in msg:
+        return 'This video is private and cannot be downloaded.'
+    if 'age-restricted' in msg or 'age restricted' in msg or 'age_gate' in msg or 'inappropriate' in msg:
+        return 'This video is age-restricted and requires a signed-in account.'
+    if 'not available in your country' in msg or ('geo' in msg and 'block' in msg):
+        return 'This video is not available in this region.'
+    if 'sign in' in msg or 'login required' in msg or 'log in to' in msg:
+        return 'This video requires sign-in to access.'
+    if 'video unavailable' in msg or 'has been removed' in msg or "doesn't exist" in msg:
+        return 'This video is unavailable or has been removed.'
+    if 'http error 429' in msg or 'too many requests' in msg:
+        return 'Too many requests — please wait a moment and try again.'
+    if 'unable to extract' in msg or 'no video formats' in msg or 'no formats' in msg:
+        return 'Could not extract video data — the link may be expired or unsupported.'
+    return f'Could not process this video. {str(e)}'
 
 
 def _validate_url(url: str):
@@ -188,6 +207,19 @@ def get_video_info():
                 'label': label,
                 'ext': 'mp4',
                 'filesize': f.get('filesize') or f.get('filesize_approx', 0),
+                'audio_only': False,
+            })
+
+        # Add MP3 audio-only option if an audio stream exists
+        best_audio = _best_audio_format(info)
+        if best_audio:
+            formats.append({
+                'format_id': 'audio_only',
+                'quality': 'MP3',
+                'label': 'MP3',
+                'ext': 'mp3',
+                'filesize': best_audio.get('filesize') or best_audio.get('filesize_approx', 0),
+                'audio_only': True,
             })
 
         thumbnails = info.get('thumbnails') or []
@@ -214,7 +246,7 @@ def get_video_info():
         })
 
     except Exception as e:
-        return jsonify({'error': f'Failed to fetch video info: {str(e)}'}), 500
+        return jsonify({'error': _classify_error(e)}), 500
 
 
 @app.route('/api/video/download', methods=['GET', 'POST'])
@@ -224,10 +256,12 @@ def download_video():
         if request.method == 'GET':
             url = request.args.get('url', '').strip()
             format_id = request.args.get('format_id', '').strip()
+            audio_only = request.args.get('audio_only', '').lower() in ('1', 'true', 'yes')
         else:
             data = request.get_json()
             url = (data or {}).get('url', '').strip()
             format_id = (data or {}).get('format_id', '').strip()
+            audio_only = str((data or {}).get('audio_only', '')).lower() in ('1', 'true', 'yes')
 
         if not url or not format_id:
             return jsonify({'error': 'URL and format_id are required.'}), 400
@@ -242,6 +276,70 @@ def download_video():
         if info.get('_type') == 'playlist' and info.get('entries'):
             info = next((e for e in info['entries'] if e), info)
 
+        title = re.sub(r'[^\w\s\-.]', '', info.get('title', 'video'))[:80].strip() or 'video'
+        ua_header = f"User-Agent: {USER_AGENT}\r\n"
+
+        # ── Audio-only (MP3) path ─────────────────────────────────────────────
+        if audio_only or format_id == 'audio_only':
+            best_audio = _best_audio_format(info)
+            if not best_audio or not best_audio.get('url'):
+                return jsonify({'error': 'No audio stream found for this video.'}), 400
+
+            audio_url = best_audio['url']
+            filename = f"{title}.mp3"
+            est_size = best_audio.get('filesize') or best_audio.get('filesize_approx')
+
+            cmd = [
+                'ffmpeg', '-y',
+                '-headers', ua_header,
+                '-i', audio_url,
+                '-vn',
+                '-c:a', 'libmp3lame',
+                '-b:a', '192k',
+                '-f', 'mp3',
+                'pipe:1',
+            ]
+
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+
+            def generate_audio():
+                try:
+                    while True:
+                        chunk = proc.stdout.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        yield chunk
+                finally:
+                    try:
+                        proc.stdout.close()
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    except Exception:
+                        pass
+                    proc.wait()
+
+            headers = {
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'audio/mpeg',
+                'X-Content-Type-Options': 'nosniff',
+                'Cache-Control': 'no-store',
+                'X-Accel-Buffering': 'no',
+                'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
+            }
+            if est_size:
+                headers['Content-Length'] = str(int(est_size))
+
+            return Response(
+                stream_with_context(generate_audio()),
+                status=200,
+                headers=headers,
+            )
+
+        # ── Video path ────────────────────────────────────────────────────────
         fmt = next(
             (f for f in info.get('formats', []) if f.get('format_id') == format_id),
             None,
@@ -251,16 +349,21 @@ def download_video():
 
         video_url = fmt['url']
         video_has_audio = (fmt.get('acodec') or 'none') != 'none'
-        audio_url = None if video_has_audio else _best_audio_url(info)
+        audio_fmt = None if video_has_audio else _best_audio_format(info)
+        audio_url = audio_fmt['url'] if audio_fmt else None
 
-        title = re.sub(r'[^\w\s\-.]', '', info.get('title', 'video'))[:80].strip() or 'video'
+        # Estimate output size for the Content-Length header
+        video_size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+        audio_size = (
+            (audio_fmt.get('filesize') or audio_fmt.get('filesize_approx') or 0)
+            if audio_fmt else 0
+        )
+        est_size = (video_size + audio_size) if video_size else None
+
         filename = f"{title}.mp4"
 
-        ua_header = f"User-Agent: {USER_AGENT}\r\n"
         cmd = ['ffmpeg', '-y']
-
         cmd += ['-headers', ua_header, '-i', video_url]
-
         if audio_url:
             cmd += ['-headers', ua_header, '-i', audio_url]
 
@@ -302,15 +405,15 @@ def download_video():
                 proc.wait()
 
         headers = {
-            'Content-Disposition': f'attachment; filename="{filename}"; filename*=UTF-8\'\'{filename}',
+            'Content-Disposition': f'attachment; filename="{filename}"',
             'Content-Type': 'video/mp4',
             'X-Content-Type-Options': 'nosniff',
             'Cache-Control': 'no-store',
-            # Tell Nginx/reverse-proxies NOT to buffer — critical for mobile streaming
             'X-Accel-Buffering': 'no',
-            # Allow JS (fetch API) to read these headers cross-context
             'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
         }
+        if est_size:
+            headers['Content-Length'] = str(int(est_size))
 
         return Response(
             stream_with_context(generate()),
@@ -324,7 +427,7 @@ def download_video():
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except Exception:
                 pass
-        return jsonify({'error': f'Download failed: {str(e)}'}), 500
+        return jsonify({'error': _classify_error(e)}), 500
 
 
 # Backward-compatible aliases for the old YouTube-only routes

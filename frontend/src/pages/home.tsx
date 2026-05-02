@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
@@ -8,6 +8,7 @@ import {
   Film,
   X,
   CheckCircle2,
+  Music2,
 } from "lucide-react";
 import { FaYoutube, FaFacebook, FaInstagram } from "react-icons/fa";
 import { useGetVideoInfo, type VideoPlatform } from "@/hooks/use-video-info";
@@ -40,13 +41,38 @@ export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState("");
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const clipboardChecked = useRef(false);
 
   const videoInfoMutation = useGetVideoInfo();
-  const { state: dlState, download } = useDownload();
+  const { state: dlState, download, cancel } = useDownload();
 
   const detectedPlatform = detectPlatform(inputValue);
   const PlatformIcon = detectedPlatform ? PLATFORM_META[detectedPlatform].icon : null;
 
+  // ── Clipboard auto-paste ─────────────────────────────────────────────────
+  const tryClipboard = useCallback(async (onlyIfEmpty = true) => {
+    if (onlyIfEmpty && inputValue) return;
+    if (!navigator.clipboard?.readText) return;
+    try {
+      const text = (await navigator.clipboard.readText()).trim();
+      if (text && detectPlatform(text)) {
+        setInputValue(text);
+      }
+    } catch {
+      // Clipboard permission denied — silently skip
+    }
+  }, [inputValue]);
+
+  // Try once on mount
+  useEffect(() => {
+    if (!clipboardChecked.current) {
+      clipboardChecked.current = true;
+      tryClipboard();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Submit / clear ───────────────────────────────────────────────────────
   const handleSubmit = () => {
     const url = inputValue.trim();
     if (!url || !detectPlatform(url)) return;
@@ -68,6 +94,7 @@ export default function Home() {
     inputRef.current?.focus();
   };
 
+  // ── Derived state ────────────────────────────────────────────────────────
   const videoData = videoInfoMutation.data;
   const isLoading = videoInfoMutation.isPending;
   const isError = videoInfoMutation.isError;
@@ -75,15 +102,17 @@ export default function Home() {
     (videoInfoMutation.error as any)?.data?.error ||
     "Couldn't fetch this video. Make sure it's public.";
 
+  const isDownloading = dlState.id !== null;
+  const dlPhase = isDownloading ? (dlState as any).phase : null;
+  const dlProgress = dlPhase === "downloading" ? (dlState as any).progress as number : null;
+
   return (
     <div className="min-h-screen flex flex-col items-center" style={{ background: "#F8F4F1" }}>
       {/* Header */}
       <header className="w-full flex items-center px-6 pt-5 pb-3">
         <div className="flex items-center gap-2">
           <img src="/favicon.png" alt="VidGrab" className="w-7 h-7" />
-          <span className="font-semibold text-base" style={{ color: "#1C2437" }}>
-            VidGrab
-          </span>
+          <span className="font-semibold text-base" style={{ color: "#1C2437" }}>VidGrab</span>
         </div>
       </header>
 
@@ -118,6 +147,7 @@ export default function Home() {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 onKeyDown={handleKeyDown}
+                onFocus={() => tryClipboard(true)}
                 placeholder="Paste a video link…"
                 className="w-full resize-none bg-transparent outline-none text-base leading-relaxed placeholder:text-[#b5aca8]"
                 style={{ color: "#272320" }}
@@ -263,93 +293,117 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {/* Download error banner */}
+                  {/* Active download: progress banner + cancel */}
                   <AnimatePresence>
-                    {dlState.id !== null && dlState.phase === "error" && (
+                    {isDownloading && dlPhase !== "error" && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
-                        className="mb-3 flex items-start gap-2 rounded-xl p-3 text-sm"
+                        className="mb-3 overflow-hidden"
+                      >
+                        <div
+                          className="flex items-center justify-between rounded-xl px-3.5 py-2.5"
+                          style={{ background: "#F0DEDC", border: "1.5px solid #F98981" }}
+                        >
+                          <div className="flex items-center gap-2 text-sm font-medium" style={{ color: "#1C2437" }}>
+                            <Loader2 className="w-4 h-4 animate-spin" style={{ color: "#F98981" }} />
+                            {dlPhase === "preparing" && "Preparing…"}
+                            {dlPhase === "downloading" && (
+                              <>
+                                Downloading
+                                {dlProgress !== null && dlProgress > 0
+                                  ? ` ${dlProgress}%`
+                                  : "…"}
+                              </>
+                            )}
+                            {dlPhase === "saving" && (
+                              <span className="flex items-center gap-1.5">
+                                <CheckCircle2 className="w-4 h-4" style={{ color: "#4caf50" }} />
+                                Saving…
+                              </span>
+                            )}
+                          </div>
+                          {(dlPhase === "preparing" || dlPhase === "downloading") && (
+                            <button
+                              onClick={cancel}
+                              className="text-xs font-medium px-2.5 py-1 rounded-lg transition-colors hover:bg-[#fad4d3]"
+                              style={{ color: "#7a6f6a" }}
+                            >
+                              Cancel
+                            </button>
+                          )}
+                        </div>
+                        {/* Progress bar */}
+                        {dlPhase === "downloading" && dlProgress !== null && (
+                          <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "#ede7e1" }}>
+                            <motion.div
+                              className="h-full rounded-full"
+                              style={{ background: "#F98981" }}
+                              animate={{ width: `${dlProgress}%` }}
+                              transition={{ ease: "linear", duration: 0.3 }}
+                            />
+                          </div>
+                        )}
+                      </motion.div>
+                    )}
+
+                    {/* Download error */}
+                    {dlState.id !== null && dlPhase === "error" && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="mb-3 flex items-start gap-2 rounded-xl p-3 text-sm overflow-hidden"
                         style={{ background: "#fff0ef", border: "1.5px solid #fad4d3", color: "#272320" }}
                       >
                         <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "#F98981" }} />
-                        {dlState.message}
+                        {(dlState as any).message}
                       </motion.div>
                     )}
                   </AnimatePresence>
 
-                  {/* Quality grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                    {videoData.formats.map((fmt) => {
-                      const isActive = dlState.id === fmt.format_id && dlState.id !== null;
-                      const phase = isActive && dlState.id !== null ? dlState.phase : null;
-                      const progress = isActive && phase === "downloading" ? (dlState as any).progress as number : null;
+                  {/* Quality buttons — video formats */}
+                  {(() => {
+                    const videoFormats = videoData.formats.filter((f) => !f.audio_only);
+                    const audioFormat = videoData.formats.find((f) => f.audio_only);
 
-                      let label: React.ReactNode;
-                      if (phase === "preparing") {
-                        label = <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Preparing…</>;
-                      } else if (phase === "downloading") {
-                        label = <><Loader2 className="w-3.5 h-3.5 animate-spin" /> {progress}%</>;
-                      } else if (phase === "saving") {
-                        label = <><CheckCircle2 className="w-3.5 h-3.5" /> Saving…</>;
-                      } else {
-                        label = null;
-                      }
+                    return (
+                      <>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {videoFormats.map((fmt) => {
+                            const isActive = dlState.id === fmt.format_id && isDownloading;
+                            return (
+                              <FormatButton
+                                key={fmt.format_id}
+                                label={fmt.label}
+                                filesize={fmt.filesize}
+                                isActive={isActive}
+                                disabled={isDownloading}
+                                progress={isActive ? dlProgress : null}
+                                phase={isActive ? dlPhase : null}
+                                onClick={() => download(submittedUrl, fmt.format_id, videoData.title, false)}
+                              />
+                            );
+                          })}
+                        </div>
 
-                      return (
-                        <button
-                          key={fmt.format_id}
-                          onClick={() => download(submittedUrl, fmt.format_id, videoData.title)}
-                          disabled={dlState.id !== null}
-                          className="relative flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left transition-all disabled:cursor-not-allowed overflow-hidden"
-                          style={{
-                            background: isActive ? "#F0DEDC" : "#F8F4F1",
-                            border: `1.5px solid ${isActive ? "#F98981" : "#ede7e1"}`,
-                          }}
-                          onMouseEnter={(e) => {
-                            if (dlState.id === null)
-                              (e.currentTarget as HTMLElement).style.background = "#F0DEDC";
-                          }}
-                          onMouseLeave={(e) => {
-                            if (!isActive)
-                              (e.currentTarget as HTMLElement).style.background = "#F8F4F1";
-                          }}
-                        >
-                          {/* Progress bar fill */}
-                          {phase === "downloading" && progress !== null && (
-                            <div
-                              className="absolute inset-0 rounded-xl transition-all duration-300"
-                              style={{
-                                background: "rgba(249,137,129,0.18)",
-                                width: `${progress}%`,
-                              }}
+                        {/* MP3 audio-only button */}
+                        {audioFormat && (
+                          <div className="mt-2">
+                            <AudioButton
+                              filesize={audioFormat.filesize}
+                              isActive={dlState.id === audioFormat.format_id && isDownloading}
+                              disabled={isDownloading}
+                              phase={dlState.id === audioFormat.format_id ? dlPhase : null}
+                              progress={dlState.id === audioFormat.format_id ? dlProgress : null}
+                              onClick={() => download(submittedUrl, audioFormat.format_id, videoData.title, true)}
                             />
-                          )}
-
-                          <div className="relative z-10">
-                            <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>
-                              {fmt.label}
-                            </p>
-                            <p className="text-xs" style={{ color: "#7a6f6a" }}>
-                              {fmt.filesize ? formatBytes(fmt.filesize) : "mp4"}
-                            </p>
                           </div>
-
-                          <div
-                            className="relative z-10 flex items-center gap-1.5 text-xs font-medium shrink-0 ml-2"
-                            style={{ color: isActive ? "#F98981" : "#7a6f6a" }}
-                          >
-                            {label ?? (
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 4v11" />
-                              </svg>
-                            )}
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </motion.div>
             )}
@@ -360,9 +414,7 @@ export default function Home() {
         {/* Empty state hint */}
         {!videoData && !isLoading && !isError && !inputValue && (
           <div className="mt-8 flex items-center gap-4 text-sm" style={{ color: "#b5aca8" }}>
-            <span className="flex items-center gap-1.5">
-              <Film className="w-4 h-4" /> HD quality
-            </span>
+            <span className="flex items-center gap-1.5"><Film className="w-4 h-4" /> HD quality</span>
             <span className="w-1 h-1 rounded-full bg-current" />
             <span>No account needed</span>
             <span className="w-1 h-1 rounded-full bg-current" />
@@ -375,5 +427,119 @@ export default function Home() {
         VidGrab · yt-dlp + ffmpeg
       </footer>
     </div>
+  );
+}
+
+// ── Sub-components ────────────────────────────────────────────────────────────
+
+interface FormatButtonProps {
+  label: string;
+  filesize: number;
+  isActive: boolean;
+  disabled: boolean;
+  progress: number | null;
+  phase: string | null;
+  onClick: () => void;
+}
+
+function FormatButton({ label, filesize, isActive, disabled, progress, phase, onClick }: FormatButtonProps) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="relative flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left transition-colors disabled:cursor-not-allowed overflow-hidden group"
+      style={{
+        background: isActive ? "#F0DEDC" : "#F8F4F1",
+        border: `1.5px solid ${isActive ? "#F98981" : "#ede7e1"}`,
+      }}
+      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.background = "#F0DEDC"; }}
+      onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#F8F4F1"; }}
+    >
+      {/* Progress fill */}
+      {phase === "downloading" && progress !== null && (
+        <motion.div
+          className="absolute inset-0 rounded-xl"
+          style={{ background: "rgba(249,137,129,0.20)", originX: 0 }}
+          animate={{ width: `${progress}%` }}
+          transition={{ ease: "linear", duration: 0.3 }}
+        />
+      )}
+
+      <div className="relative z-10">
+        <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>{label}</p>
+        <p className="text-xs" style={{ color: "#7a6f6a" }}>
+          {filesize ? formatBytes(filesize) : "mp4"}
+        </p>
+      </div>
+
+      <div className="relative z-10 shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
+        {phase === "preparing" || phase === "downloading" || phase === "saving" ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 4v11" />
+          </svg>
+        )}
+      </div>
+    </button>
+  );
+}
+
+interface AudioButtonProps {
+  filesize: number;
+  isActive: boolean;
+  disabled: boolean;
+  phase: string | null;
+  progress: number | null;
+  onClick: () => void;
+}
+
+function AudioButton({ filesize, isActive, disabled, phase, progress, onClick }: AudioButtonProps) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="relative w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left transition-colors disabled:cursor-not-allowed overflow-hidden"
+      style={{
+        background: isActive ? "#F0DEDC" : "#F8F4F1",
+        border: `1.5px solid ${isActive ? "#F98981" : "#ede7e1"}`,
+      }}
+      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.background = "#F0DEDC"; }}
+      onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#F8F4F1"; }}
+    >
+      {phase === "downloading" && progress !== null && (
+        <motion.div
+          className="absolute inset-0 rounded-xl"
+          style={{ background: "rgba(249,137,129,0.20)", originX: 0 }}
+          animate={{ width: `${progress}%` }}
+          transition={{ ease: "linear", duration: 0.3 }}
+        />
+      )}
+
+      <div className="relative z-10 flex items-center gap-2.5">
+        <div
+          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+          style={{ background: isActive ? "#F98981" : "#e8e2dd", color: isActive ? "white" : "#7a6f6a" }}
+        >
+          <Music2 className="w-3.5 h-3.5" />
+        </div>
+        <div>
+          <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>MP3 Audio</p>
+          <p className="text-xs" style={{ color: "#7a6f6a" }}>
+            {filesize ? formatBytes(filesize) : "192 kbps"}
+          </p>
+        </div>
+      </div>
+
+      <div className="relative z-10 shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
+        {phase === "preparing" || phase === "downloading" || phase === "saving" ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 4v11" />
+          </svg>
+        )}
+      </div>
+    </button>
   );
 }

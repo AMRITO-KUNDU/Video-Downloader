@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 export type DownloadState =
   | { id: null }
@@ -9,22 +9,36 @@ export type DownloadState =
 
 export function useDownload() {
   const [state, setState] = useState<DownloadState>({ id: null });
+  const abortRef = useRef<AbortController | null>(null);
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setState({ id: null });
+  }, []);
 
   const download = useCallback(async (
     videoUrl: string,
     formatId: string,
     title: string,
+    audioOnly = false,
   ) => {
     setState({ id: formatId, phase: "preparing" });
 
-    const apiUrl =
-      `/api/video/download?url=${encodeURIComponent(videoUrl)}` +
-      `&format_id=${encodeURIComponent(formatId)}`;
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    const safeFilename = `${title.replace(/[^\w\s\-.]/g, "").trim().slice(0, 80) || "video"}.mp4`;
+    const params = new URLSearchParams({ url: videoUrl, format_id: formatId });
+    if (audioOnly) params.set("audio_only", "true");
+    const apiUrl = `/api/video/download?${params}`;
+
+    const ext = audioOnly ? "mp3" : "mp4";
+    const mimeType = audioOnly ? "audio/mpeg" : "video/mp4";
+    const safeTitle = title.replace(/[^\w\s\-.]/g, "").trim().slice(0, 80) || "download";
+    const safeFilename = `${safeTitle}.${ext}`;
 
     try {
-      const response = await fetch(apiUrl);
+      const response = await fetch(apiUrl, { signal: controller.signal });
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -32,10 +46,9 @@ export function useDownload() {
       }
 
       if (!response.body) {
-        throw new Error("No response body — your browser may not support streaming downloads.");
+        throw new Error("Streaming not supported in this browser.");
       }
 
-      // Stream the response into memory, tracking progress
       const contentLength = response.headers.get("Content-Length");
       const total = contentLength ? parseInt(contentLength, 10) : 0;
 
@@ -61,9 +74,7 @@ export function useDownload() {
 
       setState({ id: formatId, phase: "saving" });
 
-      // Build a Blob from the chunks — Blob URLs are always saved as files
-      // on every browser (desktop + mobile Chrome/Safari/Firefox)
-      const blob = new Blob(chunks, { type: "video/mp4" });
+      const blob = new Blob(chunks, { type: mimeType });
       const blobUrl = URL.createObjectURL(blob);
 
       const a = document.createElement("a");
@@ -73,15 +84,19 @@ export function useDownload() {
       a.click();
       document.body.removeChild(a);
 
-      // Keep the blob alive briefly so the browser can read it, then free memory
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
-
       setState({ id: null });
     } catch (err: any) {
-      setState({ id: formatId, phase: "error", message: err.message ?? "Download failed" });
-      setTimeout(() => setState({ id: null }), 4000);
+      if (err.name === "AbortError") {
+        setState({ id: null });
+        return;
+      }
+      setState({ id: formatId, phase: "error", message: err.message ?? "Download failed." });
+      setTimeout(() => setState({ id: null }), 5000);
+    } finally {
+      abortRef.current = null;
     }
   }, []);
 
-  return { state, download };
+  return { state, download, cancel };
 }
