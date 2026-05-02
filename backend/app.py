@@ -1,14 +1,43 @@
-from flask import Flask, request, jsonify, Response, stream_with_context, send_from_directory, abort
-from flask_cors import CORS
-import yt_dlp
-import subprocess
+import logging
 import os
 import re
 import signal
+import subprocess
+import time
+from threading import Lock
 
+from flask import Flask, g, request, jsonify, Response, stream_with_context, send_from_directory, abort
+from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import yt_dlp
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+logger = logging.getLogger('vidgrab')
+
+# ── App ───────────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=[],
+    storage_uri="memory://",
+)
+limiter.init_app(app)
+
+
+@app.errorhandler(429)
+def rate_limit_handler(e):
+    return jsonify({'error': 'Too many requests — please slow down and try again.'}), 429
+
+
+# ── Constants ─────────────────────────────────────────────────────────────────
 PLATFORM_PATTERNS = {
     'youtube': re.compile(
         r'(https?://)?(www\.|m\.)?(youtube\.com/(watch\?|shorts/|embed/|v/)|youtu\.be/)',
@@ -37,14 +66,69 @@ BASE_OPTS = {
     'http_headers': {'User-Agent': USER_AGENT},
 }
 
-CHUNK_SIZE = 1024 * 256
+CHUNK_SIZE = 1024 * 256  # 256 KB
 
 STATIC_DIR = os.environ.get(
-    "STATIC_DIR",
-    os.path.join(os.path.dirname(__file__), "static"),
+    'STATIC_DIR',
+    os.path.join(os.path.dirname(__file__), 'static'),
 )
 
+# ── TTL cache ─────────────────────────────────────────────────────────────────
+class _TTLCache:
+    """Thread-safe in-memory cache with per-entry TTL and LRU-style eviction."""
 
+    def __init__(self, ttl: int = 300, max_size: int = 100):
+        self._store: dict = {}
+        self._ttl = ttl
+        self._max = max_size
+        self._lock = Lock()
+
+    def get(self, key: str):
+        with self._lock:
+            entry = self._store.get(key)
+            if entry:
+                value, exp = entry
+                if time.monotonic() < exp:
+                    return value
+                del self._store[key]
+        return None
+
+    def set(self, key: str, value):
+        with self._lock:
+            if len(self._store) >= self._max:
+                oldest = min(self._store, key=lambda k: self._store[k][1])
+                del self._store[oldest]
+            self._store[key] = (value, time.monotonic() + self._ttl)
+
+    def size(self) -> int:
+        with self._lock:
+            return len(self._store)
+
+
+# Stores {'response': processed_dict, 'raw': yt_dlp_info_dict}
+_info_cache = _TTLCache(ttl=300, max_size=100)
+
+# ── Request hooks ─────────────────────────────────────────────────────────────
+@app.before_request
+def _start_timer():
+    g.t0 = time.monotonic()
+
+
+@app.after_request
+def _finish_request(response: Response) -> Response:
+    ms = round((time.monotonic() - g.t0) * 1000)
+    logger.info('%s %s → %d  (%d ms)', request.method, request.path, response.status_code, ms)
+
+    # Security headers
+    h = response.headers
+    h['X-Content-Type-Options'] = 'nosniff'
+    h['X-Frame-Options'] = 'DENY'
+    h['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+    h['Permissions-Policy'] = 'camera=(), microphone=(), geolocation=()'
+    h.pop('Server', None)
+    return response
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 def detect_platform(url: str):
     for name, pattern in PLATFORM_PATTERNS.items():
         if pattern.search(url):
@@ -64,18 +148,16 @@ def _format_duration(seconds):
     if not seconds:
         return 'Unknown'
     seconds = int(seconds)
-    h = seconds // 3600
-    m = (seconds % 3600) // 60
-    s = seconds % 60
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
+    h, rem = divmod(seconds, 3600)
+    m, s = divmod(rem, 60)
+    return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
 
 
 def _get_formats(info):
-    """Return best-per-resolution video-only formats, falling back to combined."""
-    best_per_key = {}
+    """Return best-per-resolution video formats with progressive fallbacks."""
+    best: dict = {}
 
+    # Pass 1: video-only streams with known size
     for f in info.get('formats', []):
         vcodec = f.get('vcodec') or ''
         if not vcodec or vcodec == 'none':
@@ -83,15 +165,17 @@ def _get_formats(info):
         height = f.get('height')
         if not height:
             continue
-        filesize = f.get('filesize') or f.get('filesize_approx')
-        if not filesize or filesize <= 0:
+        if not (f.get('filesize') or f.get('filesize_approx')):
             continue
+        if (f.get('acodec') or 'none') != 'none':
+            continue  # prefer video-only in pass 1
         fps = f.get('fps') or 30
         key = (height, 60 if fps > 35 else 30)
-        if key not in best_per_key or _score(f) > _score(best_per_key[key]):
-            best_per_key[key] = f
+        if key not in best or _score(f) > _score(best[key]):
+            best[key] = f
 
-    if not best_per_key:
+    # Pass 2: combined streams (video+audio) with known size
+    if not best:
         for f in info.get('formats', []):
             vcodec = f.get('vcodec') or ''
             acodec = f.get('acodec') or ''
@@ -102,50 +186,47 @@ def _get_formats(info):
             height = f.get('height')
             if not height:
                 continue
-            filesize = f.get('filesize') or f.get('filesize_approx')
-            if not filesize or filesize <= 0:
+            if not (f.get('filesize') or f.get('filesize_approx')):
                 continue
             fps = f.get('fps') or 30
             key = (height, 60 if fps > 35 else 30)
-            if key not in best_per_key or _score(f) > _score(best_per_key[key]):
-                best_per_key[key] = f
+            if key not in best or _score(f) > _score(best[key]):
+                best[key] = f
 
-    # Last-resort: any video format with a direct URL (FB/IG often expose only one)
-    if not best_per_key:
+    # Pass 3: any video stream with a URL (FB/IG last-resort)
+    if not best:
         for f in info.get('formats', []):
-            vcodec = f.get('vcodec') or ''
-            if not vcodec or vcodec == 'none':
+            if not (f.get('vcodec') or '') or (f.get('vcodec') or '') == 'none':
                 continue
             if not f.get('url'):
                 continue
             height = f.get('height') or 0
             fps = f.get('fps') or 30
             key = (height, 60 if fps > 35 else 30)
-            if key not in best_per_key or _score(f) > _score(best_per_key[key]):
-                best_per_key[key] = f
+            if key not in best or _score(f) > _score(best[key]):
+                best[key] = f
 
-    return best_per_key
+    return best
 
 
 def _best_audio_format(info):
-    """Return the best audio-only format dict (prefers m4a/AAC for compatibility)."""
-    audio_formats = [
+    """Return the best audio-only stream dict (prefers m4a/AAC)."""
+    audio = [
         f for f in info.get('formats', [])
         if (f.get('acodec') or 'none') != 'none'
         and (f.get('vcodec') or 'none') == 'none'
         and f.get('url')
     ]
-    if not audio_formats:
+    if not audio:
         return None
-    m4a = [f for f in audio_formats if f.get('ext') == 'm4a']
-    pool = m4a if m4a else audio_formats
+    m4a = [f for f in audio if f.get('ext') == 'm4a']
+    pool = m4a if m4a else audio
     return max(pool, key=lambda f: f.get('abr') or f.get('tbr') or 0)
 
 
 def _classify_error(e: Exception) -> str:
-    """Map yt-dlp exceptions to human-readable messages."""
     msg = str(e).lower()
-    if 'private video' in msg or 'private' in msg and 'video' in msg:
+    if 'private video' in msg or ('private' in msg and 'video' in msg):
         return 'This video is private and cannot be downloaded.'
     if 'age-restricted' in msg or 'age restricted' in msg or 'age_gate' in msg or 'inappropriate' in msg:
         return 'This video is age-restricted and requires a signed-in account.'
@@ -156,7 +237,7 @@ def _classify_error(e: Exception) -> str:
     if 'video unavailable' in msg or 'has been removed' in msg or "doesn't exist" in msg:
         return 'This video is unavailable or has been removed.'
     if 'http error 429' in msg or 'too many requests' in msg:
-        return 'Too many requests — please wait a moment and try again.'
+        return 'YouTube rate-limited this request — please try again in a moment.'
     if 'unable to extract' in msg or 'no video formats' in msg or 'no formats' in msg:
         return 'Could not extract video data — the link may be expired or unsupported.'
     return f'Could not process this video. {str(e)}'
@@ -173,7 +254,61 @@ def _validate_url(url: str):
     return platform, None
 
 
+def _fetch_info(url: str) -> dict:
+    """Fetch yt-dlp info, normalising playlist wrappers."""
+    with yt_dlp.YoutubeDL({**BASE_OPTS}) as ydl:
+        info = ydl.extract_info(url, download=False)
+    if info.get('_type') == 'playlist' and info.get('entries'):
+        info = next((e for e in info['entries'] if e), info)
+    return info
+
+
+def _stream_headers(filename: str, content_type: str, est_size=None) -> dict:
+    h = {
+        'Content-Disposition': f'attachment; filename="{filename}"',
+        'Content-Type': content_type,
+        'Cache-Control': 'no-store',
+        'X-Accel-Buffering': 'no',
+        'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
+    }
+    if est_size:
+        h['Content-Length'] = str(int(est_size))
+    return h
+
+
+def _make_generator(proc):
+    """Yield stdout chunks and guarantee proc cleanup."""
+    def generate():
+        try:
+            while True:
+                chunk = proc.stdout.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.stdout.close()
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                pass
+            rc = proc.wait()
+            if rc not in (0, -15):
+                logger.warning('ffmpeg exited with code %d', rc)
+    return generate
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+@app.route('/api/health')
+def health_check():
+    return jsonify({
+        'status': 'ok',
+        'service': 'vidgrab',
+        'cache_entries': _info_cache.size(),
+    })
+
+
 @app.route('/api/video/info', methods=['POST'])
+@limiter.limit('20 per minute')
 def get_video_info():
     try:
         data = request.get_json()
@@ -183,15 +318,17 @@ def get_video_info():
         if err:
             return err
 
-        with yt_dlp.YoutubeDL({**BASE_OPTS}) as ydl:
-            info = ydl.extract_info(url, download=False)
+        # Serve from cache if available
+        cache_key = url
+        cached = _info_cache.get(cache_key)
+        if cached:
+            logger.info('cache hit for %s', url[:60])
+            return jsonify(cached['response'])
 
-        # Some IG/FB pages return a playlist-style result with one entry
-        if info.get('_type') == 'playlist' and info.get('entries'):
-            info = next((e for e in info['entries'] if e), info)
+        logger.info('fetching info for %s', url[:60])
+        info = _fetch_info(url)
 
         best_per_key = _get_formats(info)
-
         if not best_per_key:
             return jsonify({'error': 'No downloadable formats found for this video.'}), 400
 
@@ -199,18 +336,16 @@ def get_video_info():
         for (height, fps_bucket), f in sorted(
             best_per_key.items(), key=lambda x: (x[0][0], x[0][1]), reverse=True
         ):
-            label = f"{height}p" + ('60' if fps_bucket == 60 else '') if height else 'Auto'
-            quality = f"{height}p" if height else 'Auto'
+            label = (f'{height}p' + ('60' if fps_bucket == 60 else '')) if height else 'Auto'
             formats.append({
                 'format_id': f.get('format_id'),
-                'quality': quality,
+                'quality': f'{height}p' if height else 'Auto',
                 'label': label,
                 'ext': 'mp4',
                 'filesize': f.get('filesize') or f.get('filesize_approx', 0),
                 'audio_only': False,
             })
 
-        # Add MP3 audio-only option if an audio stream exists
         best_audio = _best_audio_format(info)
         if best_audio:
             formats.append({
@@ -233,23 +368,28 @@ def get_video_info():
             thumbnail = (best_thumb or thumbnails[-1]).get('url', '')
 
         title = info.get('title') or info.get('description') or 'Untitled'
-        if title and len(title) > 200:
+        if len(title) > 200:
             title = title[:200] + '…'
 
-        return jsonify({
+        result = {
             'platform': platform,
             'title': title,
             'thumbnail': thumbnail,
             'duration': _format_duration(info.get('duration')),
             'uploader': info.get('uploader') or info.get('channel') or info.get('uploader_id') or 'Unknown',
             'formats': formats,
-        })
+        }
+
+        _info_cache.set(cache_key, {'response': result, 'raw': info})
+        return jsonify(result)
 
     except Exception as e:
+        logger.error('get_video_info error: %s', e)
         return jsonify({'error': _classify_error(e)}), 500
 
 
 @app.route('/api/video/download', methods=['GET', 'POST'])
+@limiter.limit('15 per minute')
 def download_video():
     proc = None
     try:
@@ -264,82 +404,53 @@ def download_video():
             audio_only = str((data or {}).get('audio_only', '')).lower() in ('1', 'true', 'yes')
 
         if not url or not format_id:
-            return jsonify({'error': 'URL and format_id are required.'}), 400
+            return jsonify({'error': 'url and format_id are required.'}), 400
 
         _, err = _validate_url(url)
         if err:
             return err
 
-        with yt_dlp.YoutubeDL({**BASE_OPTS}) as ydl:
-            info = ydl.extract_info(url, download=False)
+        # Reuse cached yt-dlp info when available — avoids a second network round-trip
+        cached = _info_cache.get(url)
+        if cached:
+            logger.info('download using cached info for %s', url[:60])
+            info = cached['raw']
+        else:
+            logger.info('download fetching info for %s', url[:60])
+            info = _fetch_info(url)
 
-        if info.get('_type') == 'playlist' and info.get('entries'):
-            info = next((e for e in info['entries'] if e), info)
+        safe_title = re.sub(r'[^\w\s\-.]', '', info.get('title', 'video'))[:80].strip() or 'video'
+        ua_header = f'User-Agent: {USER_AGENT}\r\n'
 
-        title = re.sub(r'[^\w\s\-.]', '', info.get('title', 'video'))[:80].strip() or 'video'
-        ua_header = f"User-Agent: {USER_AGENT}\r\n"
-
-        # ── Audio-only (MP3) path ─────────────────────────────────────────────
+        # ── Audio-only (MP3) ──────────────────────────────────────────────────
         if audio_only or format_id == 'audio_only':
             best_audio = _best_audio_format(info)
             if not best_audio or not best_audio.get('url'):
                 return jsonify({'error': 'No audio stream found for this video.'}), 400
 
-            audio_url = best_audio['url']
-            filename = f"{title}.mp3"
             est_size = best_audio.get('filesize') or best_audio.get('filesize_approx')
-
             cmd = [
                 'ffmpeg', '-y',
                 '-headers', ua_header,
-                '-i', audio_url,
+                '-i', best_audio['url'],
                 '-vn',
                 '-c:a', 'libmp3lame',
                 '-b:a', '192k',
                 '-f', 'mp3',
                 'pipe:1',
             ]
-
+            logger.info('spawning ffmpeg (mp3) for %s', safe_title)
             proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 start_new_session=True,
             )
-
-            def generate_audio():
-                try:
-                    while True:
-                        chunk = proc.stdout.read(CHUNK_SIZE)
-                        if not chunk:
-                            break
-                        yield chunk
-                finally:
-                    try:
-                        proc.stdout.close()
-                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                    except Exception:
-                        pass
-                    proc.wait()
-
-            headers = {
-                'Content-Disposition': f'attachment; filename="{filename}"',
-                'Content-Type': 'audio/mpeg',
-                'X-Content-Type-Options': 'nosniff',
-                'Cache-Control': 'no-store',
-                'X-Accel-Buffering': 'no',
-                'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
-            }
-            if est_size:
-                headers['Content-Length'] = str(int(est_size))
-
             return Response(
-                stream_with_context(generate_audio()),
+                stream_with_context(_make_generator(proc)()),
                 status=200,
-                headers=headers,
+                headers=_stream_headers(f'{safe_title}.mp3', 'audio/mpeg', est_size),
             )
 
-        # ── Video path ────────────────────────────────────────────────────────
+        # ── Video (mp4) ───────────────────────────────────────────────────────
         fmt = next(
             (f for f in info.get('formats', []) if f.get('format_id') == format_id),
             None,
@@ -352,7 +463,6 @@ def download_video():
         audio_fmt = None if video_has_audio else _best_audio_format(info)
         audio_url = audio_fmt['url'] if audio_fmt else None
 
-        # Estimate output size for the Content-Length header
         video_size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
         audio_size = (
             (audio_fmt.get('filesize') or audio_fmt.get('filesize_approx') or 0)
@@ -360,10 +470,7 @@ def download_video():
         )
         est_size = (video_size + audio_size) if video_size else None
 
-        filename = f"{title}.mp4"
-
-        cmd = ['ffmpeg', '-y']
-        cmd += ['-headers', ua_header, '-i', video_url]
+        cmd = ['ffmpeg', '-y', '-headers', ua_header, '-i', video_url]
         if audio_url:
             cmd += ['-headers', ua_header, '-i', audio_url]
 
@@ -381,44 +488,15 @@ def download_video():
             '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
             'pipe:1',
         ]
-
+        logger.info('spawning ffmpeg (mp4 %s) for %s', format_id, safe_title)
         proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-
-        def generate():
-            try:
-                while True:
-                    chunk = proc.stdout.read(CHUNK_SIZE)
-                    if not chunk:
-                        break
-                    yield chunk
-            finally:
-                try:
-                    proc.stdout.close()
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                except Exception:
-                    pass
-                proc.wait()
-
-        headers = {
-            'Content-Disposition': f'attachment; filename="{filename}"',
-            'Content-Type': 'video/mp4',
-            'X-Content-Type-Options': 'nosniff',
-            'Cache-Control': 'no-store',
-            'X-Accel-Buffering': 'no',
-            'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
-        }
-        if est_size:
-            headers['Content-Length'] = str(int(est_size))
-
         return Response(
-            stream_with_context(generate()),
+            stream_with_context(_make_generator(proc)()),
             status=200,
-            headers=headers,
+            headers=_stream_headers(f'{safe_title}.mp4', 'video/mp4', est_size),
         )
 
     except Exception as e:
@@ -427,35 +505,33 @@ def download_video():
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except Exception:
                 pass
+        logger.error('download_video error: %s', e)
         return jsonify({'error': _classify_error(e)}), 500
 
 
-# Backward-compatible aliases for the old YouTube-only routes
-app.add_url_rule(
-    '/api/youtube/video-info', endpoint='yt_info',
-    view_func=get_video_info, methods=['POST'],
-)
-app.add_url_rule(
-    '/api/youtube/download', endpoint='yt_download',
-    view_func=download_video, methods=['GET', 'POST'],
-)
+# ── Legacy route aliases ──────────────────────────────────────────────────────
+app.add_url_rule('/api/youtube/video-info', endpoint='yt_info',
+                 view_func=get_video_info, methods=['POST'])
+app.add_url_rule('/api/youtube/download', endpoint='yt_download',
+                 view_func=download_video, methods=['GET', 'POST'])
 
 
-@app.route("/", defaults={"path": ""})
-@app.route("/<path:path>")
+# ── Frontend SPA catch-all ────────────────────────────────────────────────────
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
 def serve_frontend(path):
-    if path.startswith("api/"):
+    if path.startswith('api/'):
         abort(404)
 
-    index_path = os.path.join(STATIC_DIR, "index.html")
+    index_path = os.path.join(STATIC_DIR, 'index.html')
     if not os.path.exists(index_path):
-        return "Frontend not built yet. Run the start script first.", 503
+        return 'Frontend not built. Run start.sh first.', 503
 
     file_path = os.path.join(STATIC_DIR, path)
     if path and os.path.exists(file_path):
         return send_from_directory(STATIC_DIR, path)
 
-    return send_from_directory(STATIC_DIR, "index.html")
+    return send_from_directory(STATIC_DIR, 'index.html')
 
 
 if __name__ == '__main__':

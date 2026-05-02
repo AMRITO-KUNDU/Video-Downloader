@@ -1,0 +1,19 @@
+{
+  "name": "VidGrab",
+  "short_name": "VidGrab",
+  "description": "Download videos from YouTube, Facebook, and Instagram",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F8F4F1",
+  "theme_color": "#1C2437",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["utilities", "entertainment"]
+}
