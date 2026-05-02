@@ -4,6 +4,7 @@ import re
 import signal
 import subprocess
 import time
+import unicodedata
 from threading import Lock
 
 from flask import Flask, g, request, jsonify, Response, stream_with_context, send_from_directory, abort
@@ -243,6 +244,18 @@ def _classify_error(e: Exception) -> str:
     return f'Could not process this video. {str(e)}'
 
 
+def _safe_title(raw: str) -> str:
+    """Return an ASCII-only, HTTP-header-safe filename stem.
+
+    Strategy: NFKD decomposition converts accented Latin chars (é→e, ñ→n).
+    Non-decomposable scripts (Bengali, Arabic, CJK, etc.) are silently dropped.
+    The result is then stripped of any remaining non-word characters.
+    """
+    normalized = unicodedata.normalize('NFKD', raw).encode('ascii', 'ignore').decode('ascii')
+    safe = re.sub(r'[^\w\s\-.]', '', normalized)[:80].strip()
+    return safe or 'video'
+
+
 def _validate_url(url: str):
     if not url:
         return None, (jsonify({'error': 'URL is required.'}), 400)
@@ -419,7 +432,7 @@ def download_video():
             logger.info('download fetching info for %s', url[:60])
             info = _fetch_info(url)
 
-        safe_title = re.sub(r'[^\w\s\-.]', '', info.get('title', 'video'))[:80].strip() or 'video'
+        safe_title = _safe_title(info.get('title', 'video'))
         ua_header = f'User-Agent: {USER_AGENT}\r\n'
 
         # ── Audio-only (MP3) ──────────────────────────────────────────────────
