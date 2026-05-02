@@ -18,8 +18,11 @@ cp -r "$SCRIPT_DIR/frontend/dist/." "$SCRIPT_DIR/backend/static/"
 
 echo "==> Starting server on port 5000..."
 exec gunicorn \
+  --worker-class gevent \
   --workers 2 \
+  --worker-connections 100 \
   --bind 0.0.0.0:5000 \
   --timeout 3600 \
+  --keep-alive 5 \
   --chdir "$SCRIPT_DIR/backend" \
   "app:app"

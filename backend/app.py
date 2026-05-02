@@ -302,17 +302,20 @@ def download_video():
                 proc.wait()
 
         headers = {
-            'Content-Disposition': f'attachment; filename="{filename}"',
+            'Content-Disposition': f'attachment; filename="{filename}"; filename*=UTF-8\'\'{filename}',
             'Content-Type': 'video/mp4',
             'X-Content-Type-Options': 'nosniff',
-            'Cache-Control': 'no-cache',
+            'Cache-Control': 'no-store',
+            # Tell Nginx/reverse-proxies NOT to buffer — critical for mobile streaming
+            'X-Accel-Buffering': 'no',
+            # Allow JS (fetch API) to read these headers cross-context
+            'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
         }
 
         return Response(
             stream_with_context(generate()),
             status=200,
             headers=headers,
-            direct_passthrough=True,
         )
 
     except Exception as e:
