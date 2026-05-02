@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+import select
 import signal
 import subprocess
 import time
@@ -233,6 +234,8 @@ def _classify_error(e: Exception) -> str:
         return 'This video is age-restricted and requires a signed-in account.'
     if 'not available in your country' in msg or ('geo' in msg and 'block' in msg):
         return 'This video is not available in this region.'
+    if 'not a bot' in msg or 'confirm you' in msg:
+        return 'YouTube is blocking this server from downloading right now. Please try again in a moment.'
     if 'sign in' in msg or 'login required' in msg or 'log in to' in msg:
         return 'This video requires sign-in to access.'
     if 'video unavailable' in msg or 'has been removed' in msg or "doesn't exist" in msg:
@@ -293,6 +296,64 @@ def _make_generator(proc):
     """Yield stdout chunks and guarantee proc cleanup."""
     def generate():
         try:
+            while True:
+                chunk = proc.stdout.read(CHUNK_SIZE)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            try:
+                proc.stdout.close()
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                pass
+            rc = proc.wait()
+            if rc not in (0, -15):
+                logger.warning('ffmpeg exited with code %d', rc)
+    return generate
+
+
+def _probe_first_chunk(proc, timeout: int = 20):
+    """Wait up to *timeout* seconds for ffmpeg to start producing output.
+
+    Returns (first_chunk_bytes, None) on success, or (None, error_message)
+    when ffmpeg exits immediately with no output — which happens when the CDN
+    URL is blocked, expired, or otherwise inaccessible.
+
+    This must be called *before* the HTTP response headers are sent so that a
+    real JSON error can still be returned instead of a silent broken stream.
+    """
+    readable, _, _ = select.select([proc.stdout], [], [], timeout)
+    if not readable:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
+        return None, 'Download timed out — the video stream took too long to start. Please try again.'
+
+    first_chunk = os.read(proc.stdout.fileno(), CHUNK_SIZE)
+    if not first_chunk:
+        stderr_out = b''
+        try:
+            stderr_out = proc.stderr.read(2000)
+        except Exception:
+            pass
+        rc = proc.wait()
+        logger.error('ffmpeg produced no output (rc=%d): %s', rc, stderr_out.decode(errors='replace'))
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except Exception:
+            pass
+        return None, 'Could not read the video stream — the format may be temporarily unavailable. Try a different quality or try again shortly.'
+
+    return first_chunk, None
+
+
+def _make_generator_with_head(proc, first_chunk: bytes):
+    """Like _make_generator but prepends an already-read first_chunk."""
+    def generate():
+        try:
+            yield first_chunk
             while True:
                 chunk = proc.stdout.read(CHUNK_SIZE)
                 if not chunk:
@@ -433,7 +494,17 @@ def download_video():
             info = _fetch_info(url)
 
         safe_title = _safe_title(info.get('title', 'video'))
+
+        # Build platform-aware headers for ffmpeg.
+        # YouTube CDN requires Referer + Origin; without them requests are 403'd
+        # from datacenter IPs and ffmpeg silently produces 0 bytes.
         ua_header = f'User-Agent: {USER_AGENT}\r\n'
+        if 'youtube.com' in url or 'youtu.be' in url:
+            ua_header += 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com\r\n'
+        elif 'facebook.com' in url or 'fb.watch' in url or 'fb.com' in url:
+            ua_header += 'Referer: https://www.facebook.com/\r\nOrigin: https://www.facebook.com\r\n'
+        elif 'instagram.com' in url:
+            ua_header += 'Referer: https://www.instagram.com/\r\nOrigin: https://www.instagram.com\r\n'
 
         # ── Audio-only (MP3) ──────────────────────────────────────────────────
         if audio_only or format_id == 'audio_only':
@@ -454,11 +525,14 @@ def download_video():
             ]
             logger.info('spawning ffmpeg (mp3) for %s', safe_title)
             proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 start_new_session=True,
             )
+            first_chunk, err = _probe_first_chunk(proc, timeout=20)
+            if first_chunk is None:
+                return jsonify({'error': err}), 500
             return Response(
-                stream_with_context(_make_generator(proc)()),
+                stream_with_context(_make_generator_with_head(proc, first_chunk)()),
                 status=200,
                 headers=_stream_headers(f'{safe_title}.mp3', 'audio/mpeg', est_size),
             )
@@ -503,11 +577,14 @@ def download_video():
         ]
         logger.info('spawning ffmpeg (mp4 %s) for %s', format_id, safe_title)
         proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             start_new_session=True,
         )
+        first_chunk, err = _probe_first_chunk(proc, timeout=20)
+        if first_chunk is None:
+            return jsonify({'error': err}), 500
         return Response(
-            stream_with_context(_make_generator(proc)()),
+            stream_with_context(_make_generator_with_head(proc, first_chunk)()),
             status=200,
             headers=_stream_headers(f'{safe_title}.mp4', 'video/mp4', est_size),
         )
