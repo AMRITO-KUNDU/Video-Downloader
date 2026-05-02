@@ -312,11 +312,22 @@ export default function Home() {
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="flex items-start gap-3 rounded-2xl p-4"
+                className="rounded-2xl p-4"
                 style={{ background: "#fff0ef", border: "1.5px solid #fad4d3" }}
               >
-                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "#F98981" }} />
-                <p className="text-sm" style={{ color: "#272320" }}>{errorMsg}</p>
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "#F98981" }} />
+                  <p className="text-sm" style={{ color: "#272320" }}>{errorMsg}</p>
+                </div>
+                {(errorMsg.toLowerCase().includes('blocking') || errorMsg.toLowerCase().includes('try again')) && (
+                  <button
+                    onClick={() => submitUrl(inputValue.trim())}
+                    className="mt-3 ml-7 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+                    style={{ background: "#F98981", color: "white" }}
+                  >
+                    Retry
+                  </button>
+                )}
               </motion.div>
             )}
 

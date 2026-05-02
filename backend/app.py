@@ -66,6 +66,14 @@ BASE_OPTS = {
     'no_warnings': True,
     'socket_timeout': 30,
     'http_headers': {'User-Agent': USER_AGENT},
+    # android_testsuite → tv_embedded → web fallback chain.
+    # android_testsuite was added to yt-dlp specifically to bypass
+    # YouTube's "Sign in to confirm you're not a bot" on server IPs.
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android_testsuite', 'tv_embedded', 'web'],
+        }
+    },
 }
 
 CHUNK_SIZE = 1024 * 256  # 256 KB
@@ -108,7 +116,8 @@ class _TTLCache:
 
 
 # Stores {'response': processed_dict, 'raw': yt_dlp_info_dict}
-_info_cache = _TTLCache(ttl=300, max_size=100)
+# 10-minute TTL: reduces YouTube API calls and helps avoid rate-limiting.
+_info_cache = _TTLCache(ttl=600, max_size=100)
 
 # ── Request hooks ─────────────────────────────────────────────────────────────
 @app.before_request
@@ -270,13 +279,51 @@ def _validate_url(url: str):
     return platform, None
 
 
+_BOT_DETECTION_PHRASES = ('not a bot', 'confirm you', 'sign in to confirm')
+
+def _is_bot_error(e: Exception) -> bool:
+    msg = str(e).lower()
+    return any(p in msg for p in _BOT_DETECTION_PHRASES)
+
+
 def _fetch_info(url: str) -> dict:
-    """Fetch yt-dlp info, normalising playlist wrappers."""
-    with yt_dlp.YoutubeDL({**BASE_OPTS}) as ydl:
-        info = ydl.extract_info(url, download=False)
-    if info.get('_type') == 'playlist' and info.get('entries'):
-        info = next((e for e in info['entries'] if e), info)
-    return info
+    """Fetch yt-dlp info with client fallback for YouTube bot-detection.
+
+    Tries android_testsuite → tv_embedded → web in order. Each uses a
+    different YouTube API endpoint with separate bot-detection thresholds.
+    A 1.5-second pause between retries gives YouTube's rate-limiter a moment
+    to recover before the next attempt.
+    """
+    is_youtube = 'youtube.com' in url or 'youtu.be' in url
+    client_chains = (
+        [['android_testsuite', 'tv_embedded', 'web'],
+         ['tv_embedded', 'web'],
+         ['web']]
+        if is_youtube else [[]]  # non-YouTube: use BASE_OPTS as-is
+    )
+
+    last_error: Exception = RuntimeError('No clients attempted')
+    for i, client_list in enumerate(client_chains):
+        try:
+            extra = (
+                {'extractor_args': {'youtube': {'player_client': client_list}}}
+                if client_list else {}
+            )
+            with yt_dlp.YoutubeDL({**BASE_OPTS, **extra}) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if info.get('_type') == 'playlist' and info.get('entries'):
+                info = next((e for e in info['entries'] if e), info)
+            return info
+        except Exception as e:
+            last_error = e
+            if not _is_bot_error(e):
+                raise  # not bot-detection — don't retry with other clients
+            if i < len(client_chains) - 1:
+                logger.warning('bot-detection on client %s, retrying… (%d/%d)',
+                               client_list, i + 1, len(client_chains))
+                time.sleep(1.5)
+
+    raise last_error
 
 
 def _stream_headers(filename: str, content_type: str, est_size=None) -> dict:

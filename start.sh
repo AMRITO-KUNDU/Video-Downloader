@@ -16,6 +16,10 @@ echo "==> Copying frontend build to backend/static..."
 mkdir -p "$SCRIPT_DIR/backend/static"
 cp -r "$SCRIPT_DIR/frontend/dist/." "$SCRIPT_DIR/backend/static/"
 
+echo "==> Clearing port 5000 if in use..."
+fuser -k 5000/tcp 2>/dev/null || true
+sleep 1
+
 echo "==> Starting server on port 5000..."
 exec gunicorn \
   --worker-class gevent \
