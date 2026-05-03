@@ -2,7 +2,6 @@ import { useMutation } from "@tanstack/react-query";
 
 export type VideoFormat = {
   format_id: string;
-  quality: string;
   label: string;
   ext: string;
   filesize: number;

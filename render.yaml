@@ -6,14 +6,14 @@ services:
     buildCommand: bash render-build.sh
     startCommand: >-
       gunicorn
-      --worker-class gevent
+      --worker-class sync
       --workers 1
-      --worker-connections 50
+      --threads 4
       --bind 0.0.0.0:$PORT
-      --timeout 3600
+      --timeout 120
       --keep-alive 75
-      --max-requests 100
-      --max-requests-jitter 10
+      --max-requests 200
+      --max-requests-jitter 20
       --chdir backend
       app:app
     plan: free

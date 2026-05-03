@@ -18,15 +18,15 @@ cp -r "$SCRIPT_DIR/frontend/dist/." "$SCRIPT_DIR/backend/static/"
 
 echo "==> Clearing port 5000 if in use..."
 pkill -f "gunicorn" 2>/dev/null || true
-sleep 2
+sleep 1
 
 echo "==> Starting server on port 5000..."
 exec gunicorn \
-  --worker-class gevent \
-  --workers 2 \
-  --worker-connections 100 \
+  --worker-class sync \
+  --workers 1 \
+  --threads 4 \
   --bind 0.0.0.0:5000 \
-  --timeout 3600 \
+  --timeout 120 \
   --keep-alive 5 \
   --chdir "$SCRIPT_DIR/backend" \
   "app:app"

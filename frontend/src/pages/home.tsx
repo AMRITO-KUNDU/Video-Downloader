@@ -474,7 +474,7 @@ export default function Home() {
                               filesize={audioFormat.filesize}
                               isActive={dlState.id === audioFormat.format_id && isDownloading}
                               disabled={isDownloading}
-                              onClick={() => download(submittedUrl, audioFormat.format_id, videoData.title, true)}
+                              onClick={() => download(submittedUrl, audioFormat.format_id, videoData.title, true, audioFormat.ext)}
                             />
                           </div>
                         )}
@@ -499,7 +499,7 @@ export default function Home() {
               <span className="w-1 h-1 rounded-full bg-current" />
               <span>No account needed</span>
               <span className="w-1 h-1 rounded-full bg-current" />
-              <span className="flex items-center gap-1.5"><Music2 className="w-4 h-4" /> MP3 support</span>
+              <span className="flex items-center gap-1.5"><Music2 className="w-4 h-4" /> Audio support</span>
             </div>
             <p className="text-xs" style={{ color: "#c9c0bb" }}>
               Tip: copied a link? Tap the box above — it'll be filled automatically.
@@ -509,7 +509,7 @@ export default function Home() {
       </main>
 
       <footer className="w-full text-center py-6 text-xs" style={{ color: "#b5aca8" }}>
-        VidGrab · yt-dlp + ffmpeg
+        VidGrab · powered by yt-dlp
       </footer>
     </div>
   );
@@ -576,8 +576,8 @@ function AudioButton({ filesize, isActive, disabled, onClick }: AudioButtonProps
           <Music2 className="w-3.5 h-3.5" />
         </div>
         <div>
-          <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>MP3 Audio</p>
-          <p className="text-xs" style={{ color: "#7a6f6a" }}>{filesize ? formatBytes(filesize) : "192 kbps"}</p>
+          <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>Audio</p>
+          <p className="text-xs" style={{ color: "#7a6f6a" }}>{filesize ? formatBytes(filesize) : "best quality"}</p>
         </div>
       </div>
       <div className="shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>

@@ -1,76 +1,67 @@
 # VidGrab
 
-A full-stack multi-platform video downloader supporting **YouTube, Facebook, and Instagram**. Built with React + Vite (frontend) and Flask + yt-dlp + ffmpeg (backend).
+A clean video downloader app supporting YouTube, Facebook, and Instagram.
 
 ## Architecture
 
-- **Single-server model**: Flask serves both the REST API and the built React frontend from `backend/static/`
-- **Backend**: Python 3.12 / Flask + Gunicorn (gevent, 2 workers) on port 5000
-- **Frontend**: React 19 + Vite + Tailwind CSS v4, built to `frontend/dist/`, copied to `backend/static/`
-- **ffmpeg**: Stream-muxes video+audio from CDN URLs directly to the HTTP response (no temp files)
-- **Cache**: 10-minute in-memory TTL cache for yt-dlp info to reduce YouTube API calls
+- **Frontend**: React 19 + Vite + TypeScript + Tailwind CSS
+- **Backend**: Flask + gunicorn (sync workers) + yt-dlp
+- **Served**: Flask serves the built React SPA as static files
 
-## Key Files
+## Structure
 
-- `start.sh` — installs deps, builds frontend, copies dist, launches Gunicorn on port 5000
-- `backend/app.py` — Flask API: caching, rate limiting, security headers, yt-dlp, ffmpeg streaming
-- `backend/requirements.txt` — Flask, flask-cors, flask-limiter, yt-dlp, gunicorn, gevent
-- `frontend/src/pages/home.tsx` — main UI
-- `frontend/src/hooks/use-download.ts` — fetch+blob streaming with progress, cancel, audioOnly
-- `frontend/src/hooks/use-video-info.ts` — React Query mutation; VideoFormat type
-- `Dockerfile` — multi-stage build (Node 20 for frontend → Python 3.12 for backend)
-- `render.yaml` — one-click Render deployment config
-
-## Running in Replit
-
-The "Start application" workflow runs `bash start.sh`, which:
-1. `pip install` Python dependencies
-2. `npm install` + `npm run build` in `frontend/`
-3. Copies `frontend/dist/` → `backend/static/`
-4. Kills any process on port 5000 (prevents stuck-port restarts)
-5. Starts Gunicorn with 2 gevent workers on `0.0.0.0:5000`
-
-## Deploying Externally
-
-### Replit Deploy (simplest)
-Click the Deploy button — uses `start.sh` as-is, no extra config needed.
-
-### Render (cleanest external option)
-1. Push to GitHub
-2. New Web Service → Connect repo → Render detects `render.yaml` automatically
-3. Click Deploy — Render's Ubuntu environment has Python 3.12, Node.js, npm, and ffmpeg pre-installed
-4. Free tier available (spins down after 15 min inactivity; paid keeps it alive)
-
-Uses a native Python web service (no Docker) — `render.yaml` specifies the build command
-(pip install + npm build + copy dist) and start command (Gunicorn).
-
-### Docker (Railway / Fly.io / any Docker host)
-`docker build -t vidgrab . && docker run -p 5000:5000 vidgrab`
-The `Dockerfile` is a self-contained multi-stage build — no extra config needed.
-
-### Why NOT Vercel
-Vercel is serverless (10s free / 300s pro timeout). VidGrab downloads stream for 15–90s
-and run ffmpeg as a subprocess — both incompatible with serverless function limits.
+```
+backend/
+  app.py              # Flask API (~280 lines, clean & production-ready)
+  requirements.txt    # Python deps: flask, yt-dlp, gunicorn, requests
+  static/             # Built frontend (copied here at build time)
+frontend/
+  src/
+    pages/home.tsx    # Main UI page
+    hooks/
+      use-video-info.ts  # SSE-based video info fetching
+      use-download.ts    # Native anchor-click download trigger
+start.sh              # Dev/Replit startup script
+render-build.sh       # Render build script
+render.yaml           # Render deployment config
+```
 
 ## API Endpoints
 
-- `POST /api/video/info` — `{ url }` → `{ platform, title, thumbnail, duration, uploader, formats[] }`
-- `GET /api/video/download` — `?url=&format_id=&audio_only=` → streaming MP4 or MP3
-- `GET /api/health` — `{ status, cache_entries }`
+- `GET  /api/health` — health check
+- `POST /api/video/info` — fetch video metadata (SSE stream, keeps Render alive)
+- `GET  /api/video/download?url=&format_id=&audio_only=` — stream file to browser
 
-## Environment Variables
+## Key Design Decisions
 
-- `PORT` — server port (default: 5000)
-- `STATIC_DIR` — path to built frontend (default: `backend/static/`)
+1. **Sync gunicorn workers + threads** — avoids gevent/threading conflicts. 1 worker, 4 threads handles concurrency well on free tier (512MB RAM).
 
-## Known Limitations
+2. **SSE for /api/video/info** — yt-dlp can take 10-30s. SSE pings every 5s prevent Render's 55s idle-connection timeout from dropping the request.
 
-- **YouTube bot detection**: Replit's shared server IPs can get temporarily rate-limited by YouTube after heavy usage. The app retries with 3 different yt-dlp client chains (android_testsuite → tv_embedded → web). Blocks clear within 30–60 min. Facebook/Instagram are unaffected.
-- **Non-ASCII filenames**: Handled — Bengali/Arabic/CJK titles are ASCII-normalized before the Content-Disposition header.
+3. **No ffmpeg** — audio is served as the best native format (m4a/webm) directly from the CDN. This eliminates a binary dependency that isn't on Render free tier.
 
-## User Preferences
+4. **requests library for CDN proxy** — `requests.get(stream=True)` is simple, reliable, and gevent-compatible. Replaces the old urllib approach.
 
-- Port 5000 for Replit webview compatibility
-- Gunicorn + gevent for async streaming (not Flask dev server)
-- ffmpeg process isolation with `start_new_session=True` for clean cleanup
-- No temp files on disk — everything streams pipe:1 → HTTP response
+5. **TTL cache** — stores yt-dlp raw info + response for 10 min / 100 entries. Download endpoint reuses cached info without re-fetching.
+
+## Gunicorn Config (production/Render)
+
+```
+--worker-class sync
+--workers 1
+--threads 4
+--timeout 120
+--keep-alive 75
+--max-requests 200
+--max-requests-jitter 20
+```
+
+## Running Locally
+
+```bash
+bash start.sh
+```
+
+## Deploying to Render
+
+Push to GitHub — Render auto-deploys via `render.yaml`.
