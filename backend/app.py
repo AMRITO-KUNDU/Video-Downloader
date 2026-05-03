@@ -42,10 +42,6 @@ def rate_limit_handler(e):
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 PLATFORM_PATTERNS = {
-    'youtube': re.compile(
-        r'(https?://)?(www\.|m\.)?(youtube\.com/(watch|shorts|embed|v)|youtu\.be/)',
-        re.IGNORECASE,
-    ),
     'facebook': re.compile(
         r'(https?://)?(www\.|m\.|web\.)?(facebook\.com|fb\.watch|fb\.com)/',
         re.IGNORECASE,
@@ -64,11 +60,6 @@ YDL_OPTS = {
     'socket_timeout': 30,
     'noplaylist': True,
     'http_headers': {'User-Agent': USER_AGENT},
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['tv_embedded', 'ios', 'mweb', 'web'],
-        }
-    },
 }
 
 CHUNK_SIZE = 256 * 1024  # 256 KB
@@ -264,72 +255,23 @@ def _classify_error(e: Exception) -> str:
     if 'http error 429' in msg or 'too many requests' in msg or 'rate-limit' in msg:
         return 'Rate limit reached — please try again in a moment.'
     if 'no video formats found' in msg or 'no formats found' in msg:
-        return 'YouTube blocked this request — the server IP is restricted. Please try again in a few minutes.'
+        return 'No downloadable format was found for this video. It may be restricted or unavailable.'
     if 'requested format is not available' in msg or 'format is not available' in msg:
         return 'No downloadable format was found for this video. It may be restricted or unavailable.'
-    # Bot/sign-in checks — kept after the "no formats" check to avoid false positives
-    # from yt-dlp's own "Confirm you are on the latest version" message.
-    if 'not a bot' in msg or 'sign in to confirm your age' in msg:
-        return 'YouTube is blocking this server right now. Please try again in a few minutes.'
-    if 'sign in' in msg or 'login required' in msg:
+    if 'not a bot' in msg or 'sign in to confirm your age' in msg or 'sign in' in msg or 'login required' in msg:
         return 'This video requires a signed-in account to access.'
     if 'unable to extract' in msg:
         return 'Could not extract video data — the link may be expired or unsupported.'
     return 'Could not fetch this video. Please check the link and try again.'
 
 
-# Errors that are transient / client-specific and worth retrying on YouTube
-_RETRYABLE_YOUTUBE_PHRASES = (
-    'not a bot',
-    'sign in to confirm',
-    'requested format is not available',
-    'format is not available',
-    'no video formats found',
-    'no formats found',
-    'http error 403',
-    'unable to extract',
-)
-
-
 def _fetch_info(url: str) -> dict:
-    """Fetch yt-dlp metadata. Retries YouTube requests with different clients
-    when the current client hits bot-detection or format errors."""
-    is_youtube = 'youtube.com' in url or 'youtu.be' in url
-    client_chains = (
-        [
-            ['tv_embedded', 'ios', 'mweb', 'web'],
-            ['android', 'tv_embedded'],
-            ['ios', 'mweb'],
-            ['mweb'],
-        ]
-        if is_youtube else [[]]
-    )
-
-    last_error: Exception = RuntimeError('No clients attempted')
-
-    for i, client_list in enumerate(client_chains):
-        try:
-            extra = (
-                {'extractor_args': {'youtube': {'player_client': client_list}}}
-                if client_list else {}
-            )
-            with yt_dlp.YoutubeDL({**YDL_OPTS, **extra}) as ydl:
-                info = ydl.extract_info(url, download=False)
-            if info.get('_type') == 'playlist' and info.get('entries'):
-                info = next((e for e in info['entries'] if e), info)
-            return info
-        except Exception as e:
-            last_error = e
-            err_lower = str(e).lower()
-            is_retryable = is_youtube and any(p in err_lower for p in _RETRYABLE_YOUTUBE_PHRASES)
-            if not is_retryable:
-                raise
-            if i < len(client_chains) - 1:
-                logger.warning('retryable error with client %s: %s — trying next chain (%d/%d)',
-                               client_list, str(e)[:80], i + 1, len(client_chains))
-                time.sleep(1)
-
-    raise last_error
+    """Fetch yt-dlp metadata for a Facebook URL."""
+    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+        info = ydl.extract_info(url, download=False)
+    if info.get('_type') == 'playlist' and info.get('entries'):
+        info = next((e for e in info['entries'] if e), info)
+    return info
 
 
 def _build_response(url: str, platform: str, info: dict) -> dict:
@@ -391,14 +333,9 @@ def _build_response(url: str, platform: str, info: dict) -> dict:
 
 def _cdn_headers(platform: str) -> dict:
     headers = {'User-Agent': USER_AGENT}
-    origins = {
-        'youtube': 'https://www.youtube.com',
-        'facebook': 'https://www.facebook.com',
-    }
-    origin = origins.get(platform)
-    if origin:
-        headers['Referer'] = origin + '/'
-        headers['Origin'] = origin
+    if platform == 'facebook':
+        headers['Referer'] = 'https://www.facebook.com/'
+        headers['Origin'] = 'https://www.facebook.com'
     return headers
 
 
