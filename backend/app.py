@@ -1,9 +1,12 @@
+import json
 import logging
 import os
+import queue
 import re
 import select
 import signal
 import subprocess
+import threading
 import time
 import unicodedata
 from threading import Lock
@@ -61,14 +64,13 @@ USER_AGENT = (
     'Chrome/124.0.0.0 Safari/537.36'
 )
 
-# yt-dlp base options — quiet, fast, no disk writes
 BASE_OPTS = {
     'quiet': True,
     'no_warnings': True,
     'socket_timeout': 30,
+    'noplaylist': True,
     'http_headers': {'User-Agent': USER_AGENT},
-    # ios → android → web: ios is most reliable for avoiding bot-detection in 2025;
-    # android_testsuite was removed/deprecated from yt-dlp.
+    # ios → android → web: ios is most reliable in 2025 for avoiding bot-detection
     'extractor_args': {
         'youtube': {
             'player_client': ['ios', 'android', 'web'],
@@ -76,7 +78,7 @@ BASE_OPTS = {
     },
 }
 
-CHUNK_SIZE = 1024 * 256  # 256 KB read per iteration
+CHUNK_SIZE = 1024 * 256  # 256 KB
 
 STATIC_DIR = os.environ.get(
     'STATIC_DIR',
@@ -115,7 +117,6 @@ class _TTLCache:
             return len(self._store)
 
 
-# 10-minute TTL — reduces YouTube API calls and helps avoid rate-limiting
 _info_cache = _TTLCache(ttl=600, max_size=100)
 
 # ── Request hooks ─────────────────────────────────────────────────────────────
@@ -165,31 +166,27 @@ def _format_duration(seconds):
 def _get_formats(info):
     """Return best-per-resolution video formats.
 
-    Pass 1: video-only streams (prefer — muxed with best audio later).
-    Pass 2: combined streams (video+audio in one file — FB/IG progressive).
-    Pass 3: any stream with a URL, no quality filter.
+    Pass 1: video-only streams.
+    Pass 2: combined streams (FB/IG progressive mp4).
+    Pass 3: any stream with a URL (last resort).
     """
     best: dict = {}
 
-    # Pass 1: video-only
     for f in info.get('formats', []):
         vcodec = f.get('vcodec') or ''
         if not vcodec or vcodec == 'none':
             continue
         acodec = f.get('acodec') or 'none'
         if acodec != 'none':
-            continue  # skip combined in pass 1
-        height = f.get('height')
-        if not height:
             continue
-        if not f.get('url'):
+        height = f.get('height')
+        if not height or not f.get('url'):
             continue
         fps = f.get('fps') or 30
         key = (height, 60 if fps > 35 else 30)
         if key not in best or _score(f) > _score(best[key]):
             best[key] = f
 
-    # Pass 2: combined streams (e.g. Facebook/Instagram progressive mp4)
     if not best:
         for f in info.get('formats', []):
             vcodec = f.get('vcodec') or ''
@@ -199,21 +196,16 @@ def _get_formats(info):
             if not acodec or acodec == 'none':
                 continue
             height = f.get('height')
-            if not height:
-                continue
-            if not f.get('url'):
+            if not height or not f.get('url'):
                 continue
             fps = f.get('fps') or 30
             key = (height, 60 if fps > 35 else 30)
             if key not in best or _score(f) > _score(best[key]):
                 best[key] = f
 
-    # Pass 3: last resort — any format with a URL
     if not best:
         for f in info.get('formats', []):
-            if not f.get('url'):
-                continue
-            if not (f.get('vcodec') or '') or (f.get('vcodec') or '') == 'none':
+            if not f.get('url') or not (f.get('vcodec') or '') or (f.get('vcodec') or '') == 'none':
                 continue
             height = f.get('height') or 0
             fps = f.get('fps') or 30
@@ -225,7 +217,6 @@ def _get_formats(info):
 
 
 def _best_audio_format(info):
-    """Return the best audio-only stream (prefers m4a/AAC)."""
     audio = [
         f for f in info.get('formats', [])
         if (f.get('acodec') or 'none') != 'none'
@@ -263,7 +254,6 @@ def _classify_error(e: Exception) -> str:
 
 
 def _safe_title(raw: str) -> str:
-    """ASCII-only, HTTP-header-safe filename stem."""
     normalized = unicodedata.normalize('NFKD', raw).encode('ascii', 'ignore').decode('ascii')
     safe = re.sub(r'[^\w\s\-.]', '', normalized)[:80].strip()
     return safe or 'video'
@@ -283,17 +273,11 @@ def _validate_url(url: str):
 _BOT_PHRASES = ('not a bot', 'confirm you', 'sign in to confirm')
 
 def _is_bot_error(e: Exception) -> bool:
-    msg = str(e).lower()
-    return any(p in msg for p in _BOT_PHRASES)
+    return any(p in str(e).lower() for p in _BOT_PHRASES)
 
 
 def _fetch_info(url: str) -> dict:
-    """Fetch yt-dlp info with YouTube client fallback.
-
-    Tries ios → android → web in sequence. Each uses a different API endpoint
-    with its own bot-detection threshold. 1.5s pause between retries.
-    Non-YouTube URLs use BASE_OPTS as-is (single attempt).
-    """
+    """Fetch yt-dlp info with YouTube client fallback (ios → android → web)."""
     is_youtube = 'youtube.com' in url or 'youtu.be' in url
     client_chains = (
         [['ios', 'android', 'web'], ['android', 'web'], ['web']]
@@ -307,10 +291,8 @@ def _fetch_info(url: str) -> dict:
                 {'extractor_args': {'youtube': {'player_client': client_list}}}
                 if client_list else {}
             )
-            opts = {**BASE_OPTS, **extra}
-            with yt_dlp.YoutubeDL(opts) as ydl:
+            with yt_dlp.YoutubeDL({**BASE_OPTS, **extra}) as ydl:
                 info = ydl.extract_info(url, download=False)
-            # Unwrap single-item playlists
             if info.get('_type') == 'playlist' and info.get('entries'):
                 info = next((e for e in info['entries'] if e), info)
             return info
@@ -319,19 +301,76 @@ def _fetch_info(url: str) -> dict:
             if not _is_bot_error(e):
                 raise
             if i < len(client_chains) - 1:
-                logger.warning('bot-detection (%s), retrying %d/%d',
-                               client_list, i + 1, len(client_chains))
+                logger.warning('bot-detection (%s), retrying %d/%d', client_list, i + 1, len(client_chains))
                 time.sleep(1.5)
 
     raise last_error
 
 
-def _cdn_headers(url: str) -> str:
-    """Build HTTP headers string for ffmpeg -headers flag.
+def _build_info_response(url: str, platform: str, info: dict) -> dict:
+    """Build the API response dict from a yt-dlp info dict and cache it."""
+    best_per_key = _get_formats(info)
+    if not best_per_key:
+        raise ValueError('No downloadable formats found for this video.')
 
-    YouTube/Facebook/Instagram CDNs require Referer + Origin from their own
-    domain; without this, datacenter IPs get 403 and ffmpeg produces 0 bytes.
-    """
+    formats = []
+    for (height, fps_bucket), f in sorted(
+        best_per_key.items(), key=lambda x: (x[0][0], x[0][1]), reverse=True
+    ):
+        label = (f'{height}p' + ('60' if fps_bucket == 60 else '')) if height else 'Auto'
+        formats.append({
+            'format_id': f.get('format_id'),
+            'quality': f'{height}p' if height else 'Auto',
+            'label': label,
+            'ext': 'mp4',
+            'filesize': f.get('filesize') or f.get('filesize_approx', 0),
+            'audio_only': False,
+        })
+
+    best_audio = _best_audio_format(info)
+    if best_audio:
+        formats.append({
+            'format_id': 'audio_only',
+            'quality': 'MP3',
+            'label': 'MP3',
+            'ext': 'mp3',
+            'filesize': best_audio.get('filesize') or best_audio.get('filesize_approx', 0),
+            'audio_only': True,
+        })
+
+    thumbnails = info.get('thumbnails') or []
+    thumbnail = info.get('thumbnail') or ''
+    if thumbnails and not thumbnail:
+        with_dims = [t for t in thumbnails if t.get('url') and t.get('width')]
+        best_t = max(with_dims, key=lambda t: t.get('width', 0), default=None)
+        thumbnail = (best_t or thumbnails[-1]).get('url', '')
+
+    title = info.get('title') or info.get('description') or 'Untitled'
+    if len(title) > 200:
+        title = title[:200] + '…'
+
+    result = {
+        'platform': platform,
+        'title': title,
+        'thumbnail': thumbnail,
+        'duration': _format_duration(info.get('duration')),
+        'uploader': (
+            info.get('uploader') or info.get('channel')
+            or info.get('uploader_id') or 'Unknown'
+        ),
+        'formats': formats,
+    }
+
+    _info_cache.set(url, {'response': result, 'raw': info})
+    return result
+
+
+def _sse(data: dict) -> str:
+    """Format a dict as an SSE data line."""
+    return f'data: {json.dumps(data)}\n\n'
+
+
+def _cdn_headers(url: str) -> str:
     h = f'User-Agent: {USER_AGENT}\r\n'
     if 'youtube.com' in url or 'youtu.be' in url:
         h += 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com\r\n'
@@ -356,23 +395,14 @@ def _stream_headers(filename: str, content_type: str, est_size=None) -> dict:
 
 
 def _probe_first_chunk(proc, timeout: int = 20):
-    """Wait up to *timeout* s for ffmpeg to produce output BEFORE committing to 200.
-
-    Uses select() on proc.stdout then read1() — both operate on the same
-    BufferedReader so there's no fd/buffer mismatch.
-
-    Returns (first_chunk, None) on success, or (None, error_msg) on failure.
-    """
+    """Wait up to timeout s for ffmpeg to produce output before 200 is committed."""
     readable, _, _ = select.select([proc.stdout], [], [], timeout)
     if not readable:
         _kill_proc(proc)
         return None, 'Download timed out — the video stream took too long to start. Please try again.'
 
-    # read1(): single underlying raw read, returns what's available immediately.
-    # This keeps proc.stdout's internal buffer consistent — no raw fd mixing.
     first_chunk = proc.stdout.read1(CHUNK_SIZE)
     if not first_chunk:
-        # ffmpeg exited with no output — read stderr for diagnostics
         stderr_out = b''
         try:
             proc.stdout.close()
@@ -382,7 +412,7 @@ def _probe_first_chunk(proc, timeout: int = 20):
         rc = proc.wait()
         logger.error('ffmpeg no output (rc=%d): %s', rc, stderr_out.decode(errors='replace'))
         _kill_proc(proc)
-        return None, 'Could not read the video stream — the format may be temporarily unavailable. Try a different quality or try again.'
+        return None, 'Could not read the video stream — try a different quality or try again.'
 
     return first_chunk, None
 
@@ -395,12 +425,10 @@ def _kill_proc(proc):
 
 
 def _make_generator(proc, first_chunk: bytes):
-    """Yield first_chunk then stream remaining stdout; guarantee cleanup."""
     def generate():
         try:
             yield first_chunk
             while True:
-                # read1(): non-blocking single raw read — consistent with probe.
                 chunk = proc.stdout.read1(CHUNK_SIZE)
                 if not chunk:
                     break
@@ -420,91 +448,65 @@ def _make_generator(proc, first_chunk: bytes):
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/api/health')
 def health_check():
-    return jsonify({
-        'status': 'ok',
-        'service': 'vidgrab',
-        'cache_entries': _info_cache.size(),
-    })
+    return jsonify({'status': 'ok', 'service': 'vidgrab', 'cache_entries': _info_cache.size()})
 
 
 @app.route('/api/video/info', methods=['POST'])
 @limiter.limit('20 per minute')
 def get_video_info():
-    try:
-        data = request.get_json()
-        url = (data or {}).get('url', '').strip()
+    data = request.get_json()
+    url = (data or {}).get('url', '').strip()
 
-        platform, err = _validate_url(url)
-        if err:
-            return err
+    platform, err = _validate_url(url)
+    if err:
+        return err
 
+    def generate():
+        # Cached — respond instantly with no keep-alives needed
         cached = _info_cache.get(url)
         if cached:
             logger.info('cache hit: %s', url[:60])
-            return jsonify(cached['response'])
+            yield _sse(cached['response'])
+            return
 
-        logger.info('fetching info: %s', url[:60])
-        info = _fetch_info(url)
+        # Run yt-dlp in a background thread; ping the client every 5 s so
+        # Render's load balancer (55 s idle timeout) never drops the connection.
+        result_q: queue.Queue = queue.Queue()
 
-        best_per_key = _get_formats(info)
-        if not best_per_key:
-            return jsonify({'error': 'No downloadable formats found for this video.'}), 400
+        def worker():
+            try:
+                logger.info('fetching info: %s', url[:60])
+                info = _fetch_info(url)
+                result = _build_info_response(url, platform, info)
+                result_q.put(('ok', result))
+            except Exception as exc:
+                result_q.put(('error', exc))
 
-        formats = []
-        for (height, fps_bucket), f in sorted(
-            best_per_key.items(), key=lambda x: (x[0][0], x[0][1]), reverse=True
-        ):
-            label = (f'{height}p' + ('60' if fps_bucket == 60 else '')) if height else 'Auto'
-            formats.append({
-                'format_id': f.get('format_id'),
-                'quality': f'{height}p' if height else 'Auto',
-                'label': label,
-                'ext': 'mp4',
-                'filesize': f.get('filesize') or f.get('filesize_approx', 0),
-                'audio_only': False,
-            })
+        threading.Thread(target=worker, daemon=True).start()
 
-        best_audio = _best_audio_format(info)
-        if best_audio:
-            formats.append({
-                'format_id': 'audio_only',
-                'quality': 'MP3',
-                'label': 'MP3',
-                'ext': 'mp3',
-                'filesize': best_audio.get('filesize') or best_audio.get('filesize_approx', 0),
-                'audio_only': True,
-            })
+        while True:
+            try:
+                kind, payload = result_q.get(timeout=5)
+                if kind == 'ok':
+                    yield _sse(payload)
+                else:
+                    yield _sse({'error': _classify_error(payload)})
+                return
+            except queue.Empty:
+                # SSE comment — keeps the TCP connection alive, ignored by client
+                yield ': ping\n\n'
 
-        # Best thumbnail
-        thumbnails = info.get('thumbnails') or []
-        thumbnail = info.get('thumbnail') or ''
-        if thumbnails and not thumbnail:
-            with_dims = [t for t in thumbnails if t.get('url') and t.get('width')]
-            best_t = max(with_dims, key=lambda t: t.get('width', 0), default=None)
-            thumbnail = (best_t or thumbnails[-1]).get('url', '')
-
-        title = info.get('title') or info.get('description') or 'Untitled'
-        if len(title) > 200:
-            title = title[:200] + '…'
-
-        result = {
-            'platform': platform,
-            'title': title,
-            'thumbnail': thumbnail,
-            'duration': _format_duration(info.get('duration')),
-            'uploader': (
-                info.get('uploader') or info.get('channel')
-                or info.get('uploader_id') or 'Unknown'
-            ),
-            'formats': formats,
-        }
-
-        _info_cache.set(url, {'response': result, 'raw': info})
-        return jsonify(result)
-
-    except Exception as e:
-        logger.error('get_video_info: %s', e)
-        return jsonify({'error': _classify_error(e)}), 500
+    return Response(
+        stream_with_context(generate()),
+        status=200,
+        content_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+            'Access-Control-Expose-Headers': 'Content-Type',
+        },
+    )
 
 
 @app.route('/api/video/download', methods=['GET', 'POST'])
@@ -517,10 +519,10 @@ def download_video():
             format_id = request.args.get('format_id', '').strip()
             audio_only = request.args.get('audio_only', '').lower() in ('1', 'true', 'yes')
         else:
-            data = request.get_json() or {}
-            url = data.get('url', '').strip()
-            format_id = data.get('format_id', '').strip()
-            audio_only = str(data.get('audio_only', '')).lower() in ('1', 'true', 'yes')
+            d = request.get_json() or {}
+            url = d.get('url', '').strip()
+            format_id = d.get('format_id', '').strip()
+            audio_only = str(d.get('audio_only', '')).lower() in ('1', 'true', 'yes')
 
         if not url or not format_id:
             return jsonify({'error': 'url and format_id are required.'}), 400
@@ -529,14 +531,9 @@ def download_video():
         if err:
             return err
 
-        # Reuse cached info — avoids a second yt-dlp round-trip
         cached = _info_cache.get(url)
         info = cached['raw'] if cached else _fetch_info(url)
-
         safe_title = _safe_title(info.get('title', 'video'))
-
-        # ffmpeg HTTP headers — required for CDN 403 prevention
-        vid_headers = _cdn_headers(url)
 
         # ── Audio-only (MP3) ──────────────────────────────────────────────────
         if audio_only or format_id == 'audio_only':
@@ -544,23 +541,16 @@ def download_video():
             if not best_audio or not best_audio.get('url'):
                 return jsonify({'error': 'No audio stream found for this video.'}), 400
 
-            aud_headers = _cdn_headers(best_audio['url'])
             est_size = best_audio.get('filesize') or best_audio.get('filesize_approx')
             cmd = [
                 'ffmpeg', '-y',
-                '-headers', aud_headers,
+                '-headers', _cdn_headers(best_audio['url']),
                 '-i', best_audio['url'],
-                '-vn',
-                '-c:a', 'libmp3lame',
-                '-b:a', '192k',
-                '-f', 'mp3',
-                'pipe:1',
+                '-vn', '-c:a', 'libmp3lame', '-b:a', '192k',
+                '-f', 'mp3', 'pipe:1',
             ]
             logger.info('ffmpeg mp3: %s', safe_title)
-            proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                start_new_session=True,
-            )
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
             first_chunk, err_msg = _probe_first_chunk(proc)
             if first_chunk is None:
                 return jsonify({'error': err_msg}), 500
@@ -571,10 +561,7 @@ def download_video():
             )
 
         # ── Video (MP4) ───────────────────────────────────────────────────────
-        fmt = next(
-            (f for f in info.get('formats', []) if f.get('format_id') == format_id),
-            None,
-        )
+        fmt = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
         if not fmt or not fmt.get('url'):
             return jsonify({'error': 'Selected format not found or has no direct URL.'}), 400
 
@@ -584,18 +571,10 @@ def download_video():
         audio_url = audio_fmt['url'] if audio_fmt else None
 
         video_size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
-        audio_size = (
-            (audio_fmt.get('filesize') or audio_fmt.get('filesize_approx') or 0)
-            if audio_fmt else 0
-        )
+        audio_size = (audio_fmt.get('filesize') or audio_fmt.get('filesize_approx') or 0) if audio_fmt else 0
         est_size = (video_size + audio_size) if video_size else None
 
-        # Build ffmpeg command — headers before each -i for per-input CDN auth
-        cmd = [
-            'ffmpeg', '-y',
-            '-headers', _cdn_headers(video_url),
-            '-i', video_url,
-        ]
+        cmd = ['ffmpeg', '-y', '-headers', _cdn_headers(video_url), '-i', video_url]
         if audio_url:
             cmd += ['-headers', _cdn_headers(audio_url), '-i', audio_url]
 
@@ -606,20 +585,13 @@ def download_video():
             cmd += ['-map', '0:a:0']
 
         cmd += [
-            '-c:v', 'copy',
-            '-c:a', 'aac',
-            '-b:a', '128k',
+            '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
             '-f', 'mp4',
-            # frag_keyframe+empty_moov: fragmented MP4 streamable from byte 0.
-            # default_base_moof: RFC-compliant fragments, required for some players.
             '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
             'pipe:1',
         ]
         logger.info('ffmpeg mp4 %s: %s', format_id, safe_title)
-        proc = subprocess.Popen(
-            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            start_new_session=True,
-        )
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
         first_chunk, err_msg = _probe_first_chunk(proc)
         if first_chunk is None:
             return jsonify({'error': err_msg}), 500
@@ -637,10 +609,8 @@ def download_video():
 
 
 # ── Legacy aliases ────────────────────────────────────────────────────────────
-app.add_url_rule('/api/youtube/video-info', endpoint='yt_info',
-                 view_func=get_video_info, methods=['POST'])
-app.add_url_rule('/api/youtube/download', endpoint='yt_download',
-                 view_func=download_video, methods=['GET', 'POST'])
+app.add_url_rule('/api/youtube/video-info', endpoint='yt_info', view_func=get_video_info, methods=['POST'])
+app.add_url_rule('/api/youtube/download', endpoint='yt_download', view_func=download_video, methods=['GET', 'POST'])
 
 
 # ── Frontend SPA ──────────────────────────────────────────────────────────────

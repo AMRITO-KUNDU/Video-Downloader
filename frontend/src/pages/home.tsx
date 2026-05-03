@@ -71,6 +71,7 @@ export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState("");
   const [showClipboardHint, setShowClipboardHint] = useState(false);
+  const [loadingSecs, setLoadingSecs] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const clipboardChecked = useRef(false);
 
@@ -147,6 +148,13 @@ export default function Home() {
   const isDownloading = dlState.id !== null;
   const dlPhase = isDownloading ? (dlState as any).phase as string : null;
   const dlProgress = dlPhase === "downloading" ? (dlState as any).progress as number : null;
+
+  // ── Loading timer — must be after isLoading is declared ───────────────────
+  useEffect(() => {
+    if (!isLoading) { setLoadingSecs(0); return; }
+    const t = setInterval(() => setLoadingSecs(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [isLoading]);
 
   return (
     <div className="min-h-screen flex flex-col items-center" style={{ background: "#F8F4F1" }}>
@@ -302,6 +310,16 @@ export default function Home() {
             {isLoading && (
               <motion.div key="skeleton" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <VideoSkeleton />
+                {loadingSecs >= 8 && (
+                  <motion.p
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="mt-3 text-center text-xs"
+                    style={{ color: "#7a6f6a" }}
+                  >
+                    Server is waking up — first load can take up to 30 s…
+                  </motion.p>
+                )}
               </motion.div>
             )}
 
