@@ -66,12 +66,13 @@ BASE_OPTS = {
     'no_warnings': True,
     'socket_timeout': 30,
     'http_headers': {'User-Agent': USER_AGENT},
-    # android_testsuite → tv_embedded → web fallback chain.
-    # android_testsuite was added to yt-dlp specifically to bypass
-    # YouTube's "Sign in to confirm you're not a bot" on server IPs.
+    # android_vr is the most reliable client for server-side use in yt-dlp 2026+.
+    # It requires no JS runtime and no PO token — unlike web/mweb/ios which need
+    # a Proof-of-Origin token since mid-2024. android_testsuite and tv_embedded
+    # were removed in yt-dlp 2026 and cause 'NoneType is not callable' if used.
     'extractor_args': {
         'youtube': {
-            'player_client': ['android_testsuite', 'tv_embedded', 'web'],
+            'player_client': ['android_vr'],
         }
     },
 }
@@ -237,23 +238,28 @@ def _best_audio_format(info):
 
 def _classify_error(e: Exception) -> str:
     msg = str(e).lower()
+    raw = str(e)
+    if 'nonetype' in msg and 'not callable' in msg:
+        return 'A yt-dlp internal error occurred — this usually resolves itself. Please try again.'
     if 'private video' in msg or ('private' in msg and 'video' in msg):
         return 'This video is private and cannot be downloaded.'
     if 'age-restricted' in msg or 'age restricted' in msg or 'age_gate' in msg or 'inappropriate' in msg:
         return 'This video is age-restricted and requires a signed-in account.'
     if 'not available in your country' in msg or ('geo' in msg and 'block' in msg):
         return 'This video is not available in this region.'
-    if 'not a bot' in msg or 'confirm you' in msg:
-        return 'YouTube is blocking this server from downloading right now. Please try again in a moment.'
+    if 'not a bot' in msg or 'confirm you' in msg or 'precondition' in msg:
+        return 'YouTube is blocking this server right now. Please try again in a few minutes.'
     if 'sign in' in msg or 'login required' in msg or 'log in to' in msg:
         return 'This video requires sign-in to access.'
     if 'video unavailable' in msg or 'has been removed' in msg or "doesn't exist" in msg:
         return 'This video is unavailable or has been removed.'
     if 'http error 429' in msg or 'too many requests' in msg:
         return 'YouTube rate-limited this request — please try again in a moment.'
-    if 'unable to extract' in msg or 'no video formats' in msg or 'no formats' in msg:
-        return 'Could not extract video data — the link may be expired or unsupported.'
-    return f'Could not process this video. {str(e)}'
+    if 'no video formats' in msg or 'unable to extract' in msg or 'no formats' in msg:
+        return 'Could not extract video data. YouTube may require updated cookies or a login — try again shortly.'
+    if 'drm' in msg or 'drm protected' in msg:
+        return 'This video is DRM-protected and cannot be downloaded.'
+    return f'Could not process this video: {raw}'
 
 
 def _safe_title(raw: str) -> str:
@@ -279,31 +285,47 @@ def _validate_url(url: str):
     return platform, None
 
 
-_BOT_DETECTION_PHRASES = ('not a bot', 'confirm you', 'sign in to confirm')
+_BOT_DETECTION_PHRASES = (
+    'not a bot', 'confirm you', 'sign in to confirm',
+    'sign in to access', 'precondition check',
+)
 
-def _is_bot_error(e: Exception) -> bool:
+_RETRIABLE_PHRASES = _BOT_DETECTION_PHRASES + (
+    'http error 429', 'too many requests', 'no video formats',
+)
+
+def _is_retriable_error(e: Exception) -> bool:
     msg = str(e).lower()
-    return any(p in msg for p in _BOT_DETECTION_PHRASES)
+    return any(p in msg for p in _RETRIABLE_PHRASES)
+
+
+# Valid yt-dlp 2026+ clients ordered by reliability on server IPs
+# (no JS runtime, no PO token required):
+#   android_vr   — works on servers, no PO token, no JS needed (priority 10)
+#   tv_downgraded — TV client, good fallback (priority 40)
+#   tv_simply    — simplified TV, no cookie support (priority 40)
+#   'default'    — let yt-dlp pick automatically for the environment
+_YT_CLIENT_CHAINS = [
+    ['android_vr'],
+    ['tv_downgraded'],
+    ['tv_simply'],
+    ['default'],
+]
 
 
 def _fetch_info(url: str) -> dict:
-    """Fetch yt-dlp info with client fallback for YouTube bot-detection.
+    """Fetch yt-dlp info with per-client fallback chain.
 
-    Tries android_testsuite → tv_embedded → web in order. Each uses a
-    different YouTube API endpoint with separate bot-detection thresholds.
-    A 1.5-second pause between retries gives YouTube's rate-limiter a moment
-    to recover before the next attempt.
+    yt-dlp 2026 removed android_testsuite and tv_embedded. The new reliable
+    server-side client is android_vr (no JS runtime / no PO token required).
+    On transient failures we try tv_downgraded → tv_simply → yt-dlp default.
+    Non-YouTube URLs skip the chain and use BASE_OPTS directly.
     """
     is_youtube = 'youtube.com' in url or 'youtu.be' in url
-    client_chains = (
-        [['android_testsuite', 'tv_embedded', 'web'],
-         ['tv_embedded', 'web'],
-         ['web']]
-        if is_youtube else [[]]  # non-YouTube: use BASE_OPTS as-is
-    )
+    chains = _YT_CLIENT_CHAINS if is_youtube else [None]
 
     last_error: Exception = RuntimeError('No clients attempted')
-    for i, client_list in enumerate(client_chains):
+    for i, client_list in enumerate(chains):
         try:
             extra = (
                 {'extractor_args': {'youtube': {'player_client': client_list}}}
@@ -316,12 +338,12 @@ def _fetch_info(url: str) -> dict:
             return info
         except Exception as e:
             last_error = e
-            if not _is_bot_error(e):
-                raise  # not bot-detection — don't retry with other clients
-            if i < len(client_chains) - 1:
-                logger.warning('bot-detection on client %s, retrying… (%d/%d)',
-                               client_list, i + 1, len(client_chains))
-                time.sleep(1.5)
+            if not _is_retriable_error(e):
+                raise
+            if i < len(chains) - 1:
+                logger.warning('client %s failed (%s), trying next… (%d/%d)',
+                               client_list, str(e)[:80], i + 1, len(chains))
+                time.sleep(1.0)
 
     raise last_error
 
