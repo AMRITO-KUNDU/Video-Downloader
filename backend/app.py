@@ -292,6 +292,7 @@ _BOT_DETECTION_PHRASES = (
 
 _RETRIABLE_PHRASES = _BOT_DETECTION_PHRASES + (
     'http error 429', 'too many requests', 'no video formats',
+    'nonetype', 'not callable', 'unable to extract', 'no formats available',
 )
 
 def _is_retriable_error(e: Exception) -> bool:
