@@ -165,20 +165,21 @@ def _format_duration(seconds):
 
 
 def _get_formats(info):
-    """Return best-per-resolution video formats.
+    """Return best-per-resolution PROGRESSIVE (combined) video formats only.
 
-    Pass 1: video-only streams.
-    Pass 2: combined streams (FB/IG progressive mp4).
-    Pass 3: any stream with a URL (last resort).
+    Only formats that already contain both video and audio are returned.
+    These stream directly from the CDN with no ffmpeg merging needed,
+    which works for YouTube (360p/720p), Facebook, and Instagram.
     """
     best: dict = {}
 
     for f in info.get('formats', []):
         vcodec = f.get('vcodec') or ''
+        acodec = f.get('acodec') or 'none'
+        # Must have both video AND audio tracks
         if not vcodec or vcodec == 'none':
             continue
-        acodec = f.get('acodec') or 'none'
-        if acodec != 'none':
+        if not acodec or acodec == 'none':
             continue
         height = f.get('height')
         if not height or not f.get('url'):
@@ -187,32 +188,6 @@ def _get_formats(info):
         key = (height, 60 if fps > 35 else 30)
         if key not in best or _score(f) > _score(best[key]):
             best[key] = f
-
-    if not best:
-        for f in info.get('formats', []):
-            vcodec = f.get('vcodec') or ''
-            acodec = f.get('acodec') or 'none'
-            if not vcodec or vcodec == 'none':
-                continue
-            if not acodec or acodec == 'none':
-                continue
-            height = f.get('height')
-            if not height or not f.get('url'):
-                continue
-            fps = f.get('fps') or 30
-            key = (height, 60 if fps > 35 else 30)
-            if key not in best or _score(f) > _score(best[key]):
-                best[key] = f
-
-    if not best:
-        for f in info.get('formats', []):
-            if not f.get('url') or not (f.get('vcodec') or '') or (f.get('vcodec') or '') == 'none':
-                continue
-            height = f.get('height') or 0
-            fps = f.get('fps') or 30
-            key = (height, 60 if fps > 35 else 30)
-            if key not in best or _score(f) > _score(best[key]):
-                best[key] = f
 
     return best
 
@@ -594,72 +569,20 @@ def download_video():
                 headers=_stream_headers(f'{safe_title}.mp3', 'audio/mpeg', est_size),
             )
 
-        # ── Video (MP4) ───────────────────────────────────────────────────────
+        # ── Video (MP4) — direct CDN proxy, no ffmpeg ────────────────────────
+        # All video formats are now progressive (combined video+audio), so we
+        # stream directly from the CDN. ffmpeg is only used for MP3 above.
         fmt = next((f for f in info.get('formats', []) if f.get('format_id') == format_id), None)
         if not fmt or not fmt.get('url'):
             return jsonify({'error': 'Selected format not found or has no direct URL.'}), 400
 
-        video_url = fmt['url']
-        video_has_audio = (fmt.get('acodec') or 'none') != 'none'
-        audio_fmt = None if video_has_audio else _best_audio_format(info)
-        audio_url = audio_fmt['url'] if audio_fmt else None
         platform = detect_platform(url) or 'unknown'
+        video_url = fmt['url']
+        est_size = fmt.get('filesize') or fmt.get('filesize_approx') or None
 
-        video_size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
-        audio_size = (audio_fmt.get('filesize') or audio_fmt.get('filesize_approx') or 0) if audio_fmt else 0
-        est_size = (video_size + audio_size) if video_size else None
-
-        # ── Route: direct CDN proxy vs ffmpeg merge ───────────────────────────
-        # If the format already contains both video and audio (progressive MP4),
-        # stream it directly from the CDN — no ffmpeg, no re-encoding.
-        # This covers Facebook/Instagram always, and YouTube formats 18 (360p)
-        # and 22 (720p) which are combined progressive streams.
-        #
-        # NOTE: YouTube CDN URLs ARE signed/IP-bound, but only matter for
-        # browser-side redirects (browser IP ≠ server IP → 403). Server-side
-        # proxying is fine because the same server IP fetches the info AND
-        # streams the bytes — the signed URL works throughout.
-        #
-        # YouTube HD (1080p+) comes as separate DASH video+audio streams that
-        # require ffmpeg to merge → audio_url will be set → falls through to ffmpeg.
-        is_youtube = platform == 'youtube'
-        use_direct_proxy = video_has_audio and not audio_url
-
-        if use_direct_proxy:
-            logger.info('direct proxy (no ffmpeg) %s: %s', format_id, safe_title)
-            return Response(
-                stream_with_context(_direct_proxy_generator(video_url, platform)()),
-                status=200,
-                headers=_stream_headers(f'{safe_title}.mp4', 'video/mp4', est_size),
-            )
-
-        # ffmpeg path: YouTube (always) or any format that needs audio merge
-        cmd = ['ffmpeg', '-y', '-headers', _cdn_headers(video_url), '-i', video_url]
-        if audio_url:
-            cmd += ['-headers', _cdn_headers(audio_url), '-i', audio_url]
-
-        cmd += ['-map', '0:v:0']
-        if audio_url:
-            cmd += ['-map', '1:a:0']
-        elif video_has_audio:
-            cmd += ['-map', '0:a:0']
-
-        # Use stream copy for audio when no merge needed (avoids unnecessary
-        # AAC re-encode); fall back to AAC transcode when merging separate streams.
-        audio_codec = ['-c:a', 'copy'] if (video_has_audio and not audio_url) else ['-c:a', 'aac', '-b:a', '128k']
-        cmd += [
-            '-c:v', 'copy', *audio_codec,
-            '-f', 'mp4',
-            '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-            'pipe:1',
-        ]
-        logger.info('ffmpeg mp4 %s: %s', format_id, safe_title)
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
-        first_chunk, err_msg = _probe_first_chunk(proc)
-        if first_chunk is None:
-            return jsonify({'error': err_msg}), 500
+        logger.info('direct proxy %s: %s', format_id, safe_title)
         return Response(
-            stream_with_context(_make_generator(proc, first_chunk)()),
+            stream_with_context(_direct_proxy_generator(video_url, platform)()),
             status=200,
             headers=_stream_headers(f'{safe_title}.mp4', 'video/mp4', est_size),
         )
