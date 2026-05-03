@@ -449,7 +449,10 @@ def _make_generator(proc, first_chunk: bytes):
 def _cdn_headers_dict(platform: str) -> dict:
     """CDN headers as a plain dict for urllib.request."""
     headers = {'User-Agent': USER_AGENT}
-    if platform == 'facebook':
+    if platform == 'youtube':
+        headers['Referer'] = 'https://www.youtube.com/'
+        headers['Origin'] = 'https://www.youtube.com'
+    elif platform == 'facebook':
         headers['Referer'] = 'https://www.facebook.com/'
         headers['Origin'] = 'https://www.facebook.com'
     elif platform == 'instagram':
@@ -607,12 +610,20 @@ def download_video():
         est_size = (video_size + audio_size) if video_size else None
 
         # ── Route: direct CDN proxy vs ffmpeg merge ───────────────────────────
-        # Progressive MP4 (already has audio, non-YouTube): stream from CDN
-        # directly — no ffmpeg, no re-encoding, minimal CPU on Render free tier.
-        # YouTube URLs are IP-bound to the server that fetched them; redirecting
-        # them to the browser would get a 403, so YouTube always goes via ffmpeg.
+        # If the format already contains both video and audio (progressive MP4),
+        # stream it directly from the CDN — no ffmpeg, no re-encoding.
+        # This covers Facebook/Instagram always, and YouTube formats 18 (360p)
+        # and 22 (720p) which are combined progressive streams.
+        #
+        # NOTE: YouTube CDN URLs ARE signed/IP-bound, but only matter for
+        # browser-side redirects (browser IP ≠ server IP → 403). Server-side
+        # proxying is fine because the same server IP fetches the info AND
+        # streams the bytes — the signed URL works throughout.
+        #
+        # YouTube HD (1080p+) comes as separate DASH video+audio streams that
+        # require ffmpeg to merge → audio_url will be set → falls through to ffmpeg.
         is_youtube = platform == 'youtube'
-        use_direct_proxy = video_has_audio and not is_youtube and not audio_url
+        use_direct_proxy = video_has_audio and not audio_url
 
         if use_direct_proxy:
             logger.info('direct proxy (no ffmpeg) %s: %s', format_id, safe_title)
