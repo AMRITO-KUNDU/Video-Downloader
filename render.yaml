@@ -3,12 +3,7 @@ services:
     name: vidgrab
     runtime: python
     pythonVersion: "3.12"
-    buildCommand: >-
-      pip install -r backend/requirements.txt &&
-      npm install --prefix frontend &&
-      npm run build --prefix frontend &&
-      mkdir -p backend/static &&
-      cp -r frontend/dist/. backend/static/
+    buildCommand: bash render-build.sh
     startCommand: >-
       gunicorn
       --worker-class gevent
