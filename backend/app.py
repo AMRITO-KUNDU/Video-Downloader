@@ -172,17 +172,22 @@ def _score(fmt):
     return has_size + is_avc + tbr / 10000
 
 
-def _get_video_formats(info: dict) -> dict:
-    """Return best progressive (combined video+audio) format per resolution.
+_FB_FORMAT_HEIGHT = {'hd': 720, 'sd': 480}
 
-    Pass 1: formats with explicit vcodec + acodec (true combined streams).
-    Pass 2: fallback for platforms like Instagram with incomplete codec metadata.
+
+def _get_video_formats(info: dict) -> dict:
+    """Return best combined (video+audio) format per resolution.
+
+    Pass 1: explicit combined streams — vcodec AND acodec both set, neither 'none'.
+    Pass 2: Facebook-style sd/hd — no codec metadata at all (progressive combined).
+    Pass 3: vcodec set but acodec unspecified (not explicitly 'none') — incomplete metadata.
     """
     best: dict = {}
 
+    # Pass 1 — explicit combined streams
     for f in info.get('formats', []):
         vcodec = f.get('vcodec') or ''
-        acodec = f.get('acodec') or 'none'
+        acodec = f.get('acodec') or ''
         if not vcodec or vcodec == 'none':
             continue
         if not acodec or acodec == 'none':
@@ -198,9 +203,27 @@ def _get_video_formats(info: dict) -> dict:
     if best:
         return best
 
+    # Pass 2 — Facebook sd/hd: no codec metadata at all (combined progressive)
+    for f in info.get('formats', []):
+        if f.get('vcodec') is not None or f.get('acodec') is not None:
+            continue
+        if not f.get('url'):
+            continue
+        fmt_id = (f.get('format_id') or '').lower()
+        height = _FB_FORMAT_HEIGHT.get(fmt_id, 360)
+        key = (height, 30)
+        if key not in best or _score(f) > _score(best[key]):
+            best[key] = f
+
+    if best:
+        return best
+
+    # Pass 3 — vcodec set but acodec not explicitly 'none' (incomplete metadata)
     for f in info.get('formats', []):
         vcodec = f.get('vcodec') or ''
         if not vcodec or vcodec == 'none':
+            continue
+        if f.get('acodec') == 'none':
             continue
         if not f.get('url'):
             continue
