@@ -1,0 +1,14 @@
+uploads = []
+outputs = []
+
+[[generated]]
+id = "EIqcXTcKQ8pEHkkJsZpEt"
+uri = "file://attached_assets/vidgrab-icon.png"
+type = "image"
+title = "vidgrab app icon"
+
+[[generated]]
+id = "FNWJdCDdyPNSGrxneESfg"
+uri = "file://attached_assets/vidgrab-favicon.png"
+type = "image"
+title = "vidgrab favicon"

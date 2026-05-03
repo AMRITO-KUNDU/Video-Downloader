@@ -153,7 +153,7 @@ export default function Home() {
       {/* Header */}
       <header className="w-full flex items-center px-6 pt-5 pb-3">
         <div className="flex items-center gap-2">
-          <img src="/favicon.png" alt="VidGrab" className="w-7 h-7" />
+          <img src="/icon-circle.png" alt="VidGrab" className="w-7 h-7" />
           <span className="font-semibold text-base" style={{ color: "#1C2437" }}>VidGrab</span>
         </div>
       </header>
