@@ -7,7 +7,6 @@ import {
   Clock,
   Film,
   X,
-  CheckCircle2,
   Music2,
   ClipboardCheck,
 } from "lucide-react";
@@ -147,7 +146,6 @@ export default function Home() {
 
   const isDownloading = dlState.id !== null;
   const dlPhase = isDownloading ? (dlState as any).phase as string : null;
-  const dlProgress = dlPhase === "downloading" ? (dlState as any).progress as number : null;
 
   // ── Loading timer — must be after isLoading is declared ───────────────────
   useEffect(() => {
@@ -411,47 +409,26 @@ export default function Home() {
                           style={{ background: "#F0DEDC", border: "1.5px solid #F98981" }}
                         >
                           <span className="flex items-center gap-2 text-sm font-medium" style={{ color: "#1C2437" }}>
-                            {dlPhase === "saving" ? (
-                              <CheckCircle2 className="w-4 h-4" style={{ color: "#4caf50" }} />
-                            ) : (
-                              <Loader2 className="w-4 h-4 animate-spin" style={{ color: "#F98981" }} />
-                            )}
-                            {dlPhase === "preparing" && "Preparing…"}
-                            {dlPhase === "downloading" && (
-                              <>Downloading{dlProgress !== null && dlProgress > 0 ? ` ${dlProgress}%` : "…"}</>
-                            )}
-                            {dlPhase === "saving" && "Saving to device…"}
+                            <Loader2 className="w-4 h-4 animate-spin" style={{ color: "#F98981" }} />
+                            Starting download…
                           </span>
-                          {(dlPhase === "preparing" || dlPhase === "downloading") && (
-                            <button
-                              onClick={cancel}
-                              className="text-xs font-medium px-2.5 py-1 rounded-lg transition-colors hover:bg-[#fad4d3]"
-                              style={{ color: "#7a6f6a" }}
-                            >
-                              Cancel
-                            </button>
-                          )}
+                          <button
+                            onClick={cancel}
+                            className="text-xs font-medium px-2.5 py-1 rounded-lg transition-colors hover:bg-[#fad4d3]"
+                            style={{ color: "#7a6f6a" }}
+                          >
+                            Dismiss
+                          </button>
                         </div>
-                        {dlPhase === "downloading" && (
-                          <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "#ede7e1" }}>
-                            {dlProgress === null ? (
-                              /* Indeterminate — Facebook CDN doesn't send Content-Length */
-                              <motion.div
-                                className="h-full rounded-full"
-                                style={{ background: "#F98981", width: "35%" }}
-                                animate={{ x: ["0%", "186%", "0%"] }}
-                                transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-                              />
-                            ) : (
-                              <motion.div
-                                className="h-full rounded-full"
-                                style={{ background: "#F98981" }}
-                                animate={{ width: `${dlProgress}%` }}
-                                transition={{ ease: "linear", duration: 0.3 }}
-                              />
-                            )}
-                          </div>
-                        )}
+                        {/* Indeterminate slide bar while browser initiates the download */}
+                        <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "#ede7e1" }}>
+                          <motion.div
+                            className="h-full rounded-full"
+                            style={{ background: "#F98981", width: "35%" }}
+                            animate={{ x: ["0%", "186%", "0%"] }}
+                            transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                          />
+                        </div>
                       </motion.div>
                     )}
 
@@ -479,8 +456,6 @@ export default function Home() {
                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                           {videoFormats.map((fmt) => {
                             const isActive = dlState.id === fmt.format_id && isDownloading;
-                            const phase = isActive ? dlPhase : null;
-                            const progress = isActive && dlPhase === "downloading" ? dlProgress : null;
                             return (
                               <FormatButton
                                 key={fmt.format_id}
@@ -488,8 +463,6 @@ export default function Home() {
                                 filesize={fmt.filesize}
                                 isActive={isActive}
                                 disabled={isDownloading}
-                                phase={phase}
-                                progress={progress}
                                 onClick={() => download(submittedUrl, fmt.format_id, videoData.title, false)}
                               />
                             );
@@ -501,8 +474,6 @@ export default function Home() {
                               filesize={audioFormat.filesize}
                               isActive={dlState.id === audioFormat.format_id && isDownloading}
                               disabled={isDownloading}
-                              phase={dlState.id === audioFormat.format_id ? dlPhase : null}
-                              progress={dlState.id === audioFormat.format_id ? dlProgress : null}
                               onClick={() => download(submittedUrl, audioFormat.format_id, videoData.title, true)}
                             />
                           </div>
@@ -550,12 +521,10 @@ interface FormatButtonProps {
   filesize: number;
   isActive: boolean;
   disabled: boolean;
-  phase: string | null;
-  progress: number | null;
   onClick: () => void;
 }
 
-function FormatButton({ label, filesize, isActive, disabled, phase, progress, onClick }: FormatButtonProps) {
+function FormatButton({ label, filesize, isActive, disabled, onClick }: FormatButtonProps) {
   return (
     <button
       onClick={onClick}
@@ -568,24 +537,12 @@ function FormatButton({ label, filesize, isActive, disabled, phase, progress, on
       onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.background = "#F0DEDC"; }}
       onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#F8F4F1"; }}
     >
-      {phase === "downloading" && progress !== null && (
-        <motion.div
-          className="absolute inset-0 rounded-xl"
-          style={{ background: "rgba(249,137,129,0.18)", originX: 0, width: `${progress}%` }}
-          animate={{ width: `${progress}%` }}
-          transition={{ ease: "linear", duration: 0.3 }}
-        />
-      )}
-      <div className="relative z-10">
+      <div>
         <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>{label}</p>
         <p className="text-xs" style={{ color: "#7a6f6a" }}>{filesize ? formatBytes(filesize) : "mp4"}</p>
       </div>
-      <div className="relative z-10 shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
-        {phase && phase !== "error" ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : (
-          <DownloadIcon />
-        )}
+      <div className="shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
+        {isActive ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadIcon />}
       </div>
     </button>
   );
@@ -595,12 +552,10 @@ interface AudioButtonProps {
   filesize: number;
   isActive: boolean;
   disabled: boolean;
-  phase: string | null;
-  progress: number | null;
   onClick: () => void;
 }
 
-function AudioButton({ filesize, isActive, disabled, phase, progress, onClick }: AudioButtonProps) {
+function AudioButton({ filesize, isActive, disabled, onClick }: AudioButtonProps) {
   return (
     <button
       onClick={onClick}
@@ -613,15 +568,7 @@ function AudioButton({ filesize, isActive, disabled, phase, progress, onClick }:
       onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.background = "#F0DEDC"; }}
       onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#F8F4F1"; }}
     >
-      {phase === "downloading" && progress !== null && (
-        <motion.div
-          className="absolute inset-0 rounded-xl"
-          style={{ background: "rgba(249,137,129,0.18)", originX: 0 }}
-          animate={{ width: `${progress}%` }}
-          transition={{ ease: "linear", duration: 0.3 }}
-        />
-      )}
-      <div className="relative z-10 flex items-center gap-2.5">
+      <div className="flex items-center gap-2.5">
         <div
           className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
           style={{ background: isActive ? "#F98981" : "#e8e2dd", color: isActive ? "white" : "#7a6f6a" }}
@@ -633,12 +580,8 @@ function AudioButton({ filesize, isActive, disabled, phase, progress, onClick }:
           <p className="text-xs" style={{ color: "#7a6f6a" }}>{filesize ? formatBytes(filesize) : "192 kbps"}</p>
         </div>
       </div>
-      <div className="relative z-10 shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
-        {phase && phase !== "error" ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : (
-          <DownloadIcon />
-        )}
+      <div className="shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
+        {isActive ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadIcon />}
       </div>
     </button>
   );

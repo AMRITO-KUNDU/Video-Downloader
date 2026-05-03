@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 import unicodedata
+import urllib.request as _urllib_req
 from threading import Lock
 
 from flask import Flask, g, request, jsonify, Response, stream_with_context, send_from_directory, abort
@@ -445,6 +446,36 @@ def _make_generator(proc, first_chunk: bytes):
     return generate
 
 
+def _cdn_headers_dict(platform: str) -> dict:
+    """CDN headers as a plain dict for urllib.request."""
+    headers = {'User-Agent': USER_AGENT}
+    if platform == 'facebook':
+        headers['Referer'] = 'https://www.facebook.com/'
+        headers['Origin'] = 'https://www.facebook.com'
+    elif platform == 'instagram':
+        headers['Referer'] = 'https://www.instagram.com/'
+        headers['Origin'] = 'https://www.instagram.com'
+    return headers
+
+
+def _direct_proxy_generator(cdn_url: str, platform: str):
+    """Stream a CDN URL directly — no ffmpeg, no re-encoding.
+    Used for progressive MP4s (Facebook/Instagram) that already contain audio.
+    """
+    def generate():
+        req = _urllib_req.Request(cdn_url, headers=_cdn_headers_dict(platform))
+        try:
+            with _urllib_req.urlopen(req, timeout=60) as resp:
+                while True:
+                    chunk = resp.read(CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    yield chunk
+        except Exception as e:
+            logger.error('direct_proxy error: %s', e)
+    return generate
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/api/health')
 def health_check():
@@ -569,11 +600,29 @@ def download_video():
         video_has_audio = (fmt.get('acodec') or 'none') != 'none'
         audio_fmt = None if video_has_audio else _best_audio_format(info)
         audio_url = audio_fmt['url'] if audio_fmt else None
+        platform = detect_platform(url) or 'unknown'
 
         video_size = fmt.get('filesize') or fmt.get('filesize_approx') or 0
         audio_size = (audio_fmt.get('filesize') or audio_fmt.get('filesize_approx') or 0) if audio_fmt else 0
         est_size = (video_size + audio_size) if video_size else None
 
+        # ── Route: direct CDN proxy vs ffmpeg merge ───────────────────────────
+        # Progressive MP4 (already has audio, non-YouTube): stream from CDN
+        # directly — no ffmpeg, no re-encoding, minimal CPU on Render free tier.
+        # YouTube URLs are IP-bound to the server that fetched them; redirecting
+        # them to the browser would get a 403, so YouTube always goes via ffmpeg.
+        is_youtube = platform == 'youtube'
+        use_direct_proxy = video_has_audio and not is_youtube and not audio_url
+
+        if use_direct_proxy:
+            logger.info('direct proxy (no ffmpeg) %s: %s', format_id, safe_title)
+            return Response(
+                stream_with_context(_direct_proxy_generator(video_url, platform)()),
+                status=200,
+                headers=_stream_headers(f'{safe_title}.mp4', 'video/mp4', est_size),
+            )
+
+        # ffmpeg path: YouTube (always) or any format that needs audio merge
         cmd = ['ffmpeg', '-y', '-headers', _cdn_headers(video_url), '-i', video_url]
         if audio_url:
             cmd += ['-headers', _cdn_headers(audio_url), '-i', audio_url]
@@ -584,8 +633,11 @@ def download_video():
         elif video_has_audio:
             cmd += ['-map', '0:a:0']
 
+        # Use stream copy for audio when no merge needed (avoids unnecessary
+        # AAC re-encode); fall back to AAC transcode when merging separate streams.
+        audio_codec = ['-c:a', 'copy'] if (video_has_audio and not audio_url) else ['-c:a', 'aac', '-b:a', '128k']
         cmd += [
-            '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+            '-c:v', 'copy', *audio_codec,
             '-f', 'mp4',
             '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
             'pipe:1',
