@@ -10,7 +10,7 @@ import {
   Music2,
   ClipboardCheck,
 } from "lucide-react";
-import { FaYoutube, FaFacebook, FaInstagram } from "react-icons/fa";
+import { FaYoutube, FaFacebook } from "react-icons/fa";
 import { useGetVideoInfo, type VideoPlatform } from "@/hooks/use-video-info";
 import { useDownload } from "@/hooks/use-download";
 import { formatBytes } from "@/lib/utils";
@@ -19,7 +19,6 @@ import { formatBytes } from "@/lib/utils";
 const PLATFORM_PATTERNS: Record<string, RegExp> = {
   youtube: /(youtube\.com\/(watch\?|shorts\/|embed\/|v\/)|youtu\.be\/)/i,
   facebook: /(facebook\.com\/|fb\.watch\/|fb\.com\/)/i,
-  instagram: /instagram\.com\/(p|reel|reels|tv)\//i,
 };
 
 function detectPlatform(url: string): VideoPlatform | null {
@@ -35,7 +34,6 @@ const PLATFORM_META: Record<
 > = {
   youtube: { icon: FaYoutube, color: "#FF0000", label: "YouTube" },
   facebook: { icon: FaFacebook, color: "#1877F2", label: "Facebook" },
-  instagram: { icon: FaInstagram, color: "#E4405F", label: "Instagram" },
 };
 
 // ── Skeleton ─────────────────────────────────────────────────────────────────
@@ -181,7 +179,7 @@ export default function Home() {
                   Download any video
                 </h1>
                 <p className="text-base mb-8" style={{ color: "#7a6f6a" }}>
-                  YouTube · Facebook · Instagram
+                  YouTube · Facebook
                 </p>
               </motion.div>
             )}
@@ -237,7 +235,6 @@ export default function Home() {
                   <div className="flex items-center gap-3">
                     <FaYoutube className="w-4 h-4 text-[#b5aca8]" />
                     <FaFacebook className="w-4 h-4 text-[#b5aca8]" />
-                    <FaInstagram className="w-4 h-4 text-[#b5aca8]" />
                   </div>
                 )}
                 {inputValue && (

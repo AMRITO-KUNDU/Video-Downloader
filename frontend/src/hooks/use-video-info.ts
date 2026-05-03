@@ -8,7 +8,7 @@ export type VideoFormat = {
   audio_only: boolean;
 };
 
-export type VideoPlatform = "youtube" | "facebook" | "instagram";
+export type VideoPlatform = "youtube" | "facebook";
 
 export type VideoInfo = {
   platform: VideoPlatform;

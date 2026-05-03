@@ -50,10 +50,6 @@ PLATFORM_PATTERNS = {
         r'(https?://)?(www\.|m\.|web\.)?(facebook\.com|fb\.watch|fb\.com)/',
         re.IGNORECASE,
     ),
-    'instagram': re.compile(
-        r'(https?://)?(www\.)?instagram\.com/(p/|reel/|reels/|tv/|stories/)',
-        re.IGNORECASE,
-    ),
 }
 
 USER_AGENT = (
@@ -246,8 +242,6 @@ def _classify_error(e: Exception) -> str:
         return 'Rate limit reached — please try again in a moment.'
     if 'no video formats found' in msg or 'no formats found' in msg:
         return 'YouTube blocked this request — the server IP is restricted. Please try again in a few minutes.'
-    if 'instagram' in msg and ('login' in msg or 'unauthorized' in msg or 'not available' in msg):
-        return 'Instagram requires login to access this content. Only some public videos work without an account.'
     if 'requested format is not available' in msg or 'format is not available' in msg:
         return 'No downloadable format was found for this video. It may be restricted or unavailable.'
     # Bot/sign-in checks — kept after the "no formats" check to avoid false positives
@@ -377,7 +371,6 @@ def _cdn_headers(platform: str) -> dict:
     origins = {
         'youtube': 'https://www.youtube.com',
         'facebook': 'https://www.facebook.com',
-        'instagram': 'https://www.instagram.com',
     }
     origin = origins.get(platform)
     if origin:
