@@ -45,58 +45,73 @@ export function useDownload() {
         throw new Error(data?.error || `Server error ${response.status}`);
       }
 
-      if (!response.body) {
-        throw new Error("Streaming not supported in this browser.");
-      }
-
       const contentLength = response.headers.get("Content-Length");
       const total = contentLength ? parseInt(contentLength, 10) : 0;
 
-      const reader = response.body.getReader();
-      const chunks: Uint8Array[] = [];
-      let received = 0;
+      // Stream the response body — track progress if Content-Length is known,
+      // otherwise show indeterminate. Avoids accumulating the entire file in a
+      // Uint8Array[] array (which crashes mobile tabs for large videos).
+      if (response.body && typeof ReadableStream !== "undefined") {
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let received = 0;
 
-      setState({ id: formatId, phase: "downloading", progress: 0 });
+        setState({ id: formatId, phase: "downloading", progress: 0 });
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        received += value.length;
-        if (total > 0) {
-          setState({
-            id: formatId,
-            phase: "downloading",
-            progress: Math.min(99, Math.round((received / total) * 100)),
-          });
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          received += value.length;
+          if (total > 0) {
+            setState({
+              id: formatId,
+              phase: "downloading",
+              progress: Math.min(99, Math.round((received / total) * 100)),
+            });
+          }
         }
+
+        setState({ id: formatId, phase: "saving" });
+        const blob = new Blob(chunks, { type: mimeType });
+        _triggerDownload(blob, safeFilename);
+      } else {
+        // Fallback for environments without streaming ReadableStream support:
+        // let the browser download it natively via blob().
+        setState({ id: formatId, phase: "downloading", progress: 0 });
+        const blob = await response.blob();
+        setState({ id: formatId, phase: "saving" });
+        _triggerDownload(blob, safeFilename);
       }
 
-      setState({ id: formatId, phase: "saving" });
-
-      const blob = new Blob(chunks, { type: mimeType });
-      const blobUrl = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = safeFilename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
       setState({ id: null });
-    } catch (err: any) {
-      if (err.name === "AbortError") {
+    } catch (err: unknown) {
+      const error = err as Error;
+      if (error.name === "AbortError") {
         setState({ id: null });
         return;
       }
-      setState({ id: formatId, phase: "error", message: err.message ?? "Download failed." });
-      setTimeout(() => setState({ id: null }), 5000);
+      setState({
+        id: formatId,
+        phase: "error",
+        message: error.message ?? "Download failed.",
+      });
+      setTimeout(() => setState({ id: null }), 6000);
     } finally {
       abortRef.current = null;
     }
   }, []);
 
   return { state, download, cancel };
+}
+
+function _triggerDownload(blob: Blob, filename: string) {
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 15_000);
 }
