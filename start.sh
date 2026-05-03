@@ -18,7 +18,8 @@ cp -r "$SCRIPT_DIR/frontend/dist/." "$SCRIPT_DIR/backend/static/"
 
 echo "==> Clearing port 5000 if in use..."
 pkill -f "gunicorn" 2>/dev/null || true
-sleep 1
+fuser -k 5000/tcp 2>/dev/null || true
+sleep 2
 
 echo "==> Starting server on port 5000..."
 exec gunicorn \
