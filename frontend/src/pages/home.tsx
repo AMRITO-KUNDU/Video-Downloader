@@ -17,7 +17,7 @@ import { formatBytes } from "@/lib/utils";
 
 // ── Platform detection ────────────────────────────────────────────────────────
 const PLATFORM_PATTERNS: Record<string, RegExp> = {
-  youtube: /(youtube\.com\/(watch|shorts|embed|v)|youtu\.be\/)/i,
+  youtube: /(youtube\.com\/(watch\?|shorts\/|embed\/|v\/)|youtu\.be\/)/i,
   facebook: /(facebook\.com\/|fb\.watch\/|fb\.com\/)/i,
   instagram: /instagram\.com\/(p|reel|reels|tv)\//i,
 };

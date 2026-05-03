@@ -43,7 +43,7 @@ def rate_limit_handler(e):
 # ── Constants ─────────────────────────────────────────────────────────────────
 PLATFORM_PATTERNS = {
     'youtube': re.compile(
-        r'(https?://)?(www\.|m\.)?(youtube\.com/(watch|shorts|embed|v)/|youtu\.be/)',
+        r'(https?://)?(www\.|m\.)?(youtube\.com/(watch|shorts|embed|v)|youtu\.be/)',
         re.IGNORECASE,
     ),
     'facebook': re.compile(
@@ -240,34 +240,54 @@ def _classify_error(e: Exception) -> str:
         return 'This video is age-restricted and requires a signed-in account.'
     if 'not available in your country' in msg or ('geo' in msg and 'block' in msg):
         return 'This video is not available in this region.'
-    if 'not a bot' in msg or 'confirm you' in msg or 'sign in to confirm' in msg:
-        return 'YouTube is blocking this server. Please try again in a moment.'
-    if 'sign in' in msg or 'login required' in msg:
-        return 'This video requires a signed-in account to access.'
     if 'video unavailable' in msg or 'has been removed' in msg or "doesn't exist" in msg:
         return 'This video is unavailable or has been removed.'
-    if 'http error 429' in msg or 'too many requests' in msg:
-        return 'Too many requests — please try again in a moment.'
-    if 'unable to extract' in msg or 'no video formats' in msg:
+    if 'http error 429' in msg or 'too many requests' in msg or 'rate-limit' in msg:
+        return 'Rate limit reached — please try again in a moment.'
+    if 'no video formats found' in msg or 'no formats found' in msg:
+        return 'YouTube blocked this request — the server IP is restricted. Please try again in a few minutes.'
+    if 'instagram' in msg and ('login' in msg or 'unauthorized' in msg or 'not available' in msg):
+        return 'Instagram requires login to access this content. Only some public videos work without an account.'
+    if 'requested format is not available' in msg or 'format is not available' in msg:
+        return 'No downloadable format was found for this video. It may be restricted or unavailable.'
+    # Bot/sign-in checks — kept after the "no formats" check to avoid false positives
+    # from yt-dlp's own "Confirm you are on the latest version" message.
+    if 'not a bot' in msg or 'sign in to confirm your age' in msg:
+        return 'YouTube is blocking this server right now. Please try again in a few minutes.'
+    if 'sign in' in msg or 'login required' in msg:
+        return 'This video requires a signed-in account to access.'
+    if 'unable to extract' in msg:
         return 'Could not extract video data — the link may be expired or unsupported.'
-    if 'instagram' in msg and ('login' in msg or 'unauthorized' in msg):
-        return 'This Instagram content requires a logged-in account to access.'
-    return 'Could not process this video. Please check the link and try again.'
+    return 'Could not fetch this video. Please check the link and try again.'
+
+
+# Errors that are transient / client-specific and worth retrying on YouTube
+_RETRYABLE_YOUTUBE_PHRASES = (
+    'not a bot',
+    'sign in to confirm',
+    'requested format is not available',
+    'format is not available',
+    'no video formats found',
+    'no formats found',
+    'http error 403',
+    'unable to extract',
+)
 
 
 def _fetch_info(url: str) -> dict:
-    """Fetch yt-dlp metadata, with YouTube bot-detection retry logic."""
+    """Fetch yt-dlp metadata. Retries YouTube requests with different clients
+    when the current client hits bot-detection or format errors."""
     is_youtube = 'youtube.com' in url or 'youtu.be' in url
     client_chains = (
         [
             ['tv_embedded', 'ios', 'mweb', 'web'],
-            ['ios', 'mweb', 'web'],
-            ['mweb', 'web'],
+            ['android', 'tv_embedded'],
+            ['ios', 'mweb'],
+            ['mweb'],
         ]
         if is_youtube else [[]]
     )
 
-    bot_phrases = ('not a bot', 'confirm you', 'sign in to confirm')
     last_error: Exception = RuntimeError('No clients attempted')
 
     for i, client_list in enumerate(client_chains):
@@ -283,12 +303,14 @@ def _fetch_info(url: str) -> dict:
             return info
         except Exception as e:
             last_error = e
-            is_bot = any(p in str(e).lower() for p in bot_phrases)
-            if not is_bot:
+            err_lower = str(e).lower()
+            is_retryable = is_youtube and any(p in err_lower for p in _RETRYABLE_YOUTUBE_PHRASES)
+            if not is_retryable:
                 raise
             if i < len(client_chains) - 1:
-                logger.warning('bot-detection, retrying with client chain %d/%d', i + 1, len(client_chains))
-                time.sleep(1.5)
+                logger.warning('retryable error with client %s: %s — trying next chain (%d/%d)',
+                               client_list, str(e)[:80], i + 1, len(client_chains))
+                time.sleep(1)
 
     raise last_error
 
