@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: vidgrab
+    runtime: docker
+    plan: free
+    envVars:
+      - key: PORT
+        value: 5000
+    healthCheckPath: /api/health
+    autoDeploy: true
