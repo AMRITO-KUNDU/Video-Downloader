@@ -35,13 +35,16 @@ The "Start application" workflow runs `bash start.sh`, which:
 ### Replit Deploy (simplest)
 Click the Deploy button — uses `start.sh` as-is, no extra config needed.
 
-### Render
+### Render (cleanest external option)
 1. Push to GitHub
-2. New Web Service → Connect repo → Runtime: Docker
-3. Render auto-detects `render.yaml` — just click Deploy
+2. New Web Service → Connect repo → Render detects `render.yaml` automatically
+3. Click Deploy — Render's Ubuntu environment has Python 3.12, Node.js, npm, and ffmpeg pre-installed
 4. Free tier available (spins down after 15 min inactivity; paid keeps it alive)
 
-### Railway / Fly.io / Any Docker host
+Uses a native Python web service (no Docker) — `render.yaml` specifies the build command
+(pip install + npm build + copy dist) and start command (Gunicorn).
+
+### Docker (Railway / Fly.io / any Docker host)
 `docker build -t vidgrab . && docker run -p 5000:5000 vidgrab`
 The `Dockerfile` is a self-contained multi-stage build — no extra config needed.
 
