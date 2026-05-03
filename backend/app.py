@@ -492,6 +492,17 @@ def get_video_info():
         if len(title) > 200:
             title = title[:200] + '…'
 
+        raw_chapters = info.get('chapters') or []
+        chapters = [
+            {
+                'title': c.get('title') or f'Chapter {i + 1}',
+                'start_time': float(c.get('start_time') or 0),
+                'end_time': float(c.get('end_time') or 0),
+            }
+            for i, c in enumerate(raw_chapters)
+            if c.get('end_time', 0) > c.get('start_time', 0)
+        ]
+
         result = {
             'platform': platform,
             'title': title,
@@ -499,6 +510,7 @@ def get_video_info():
             'duration': _format_duration(info.get('duration')),
             'uploader': info.get('uploader') or info.get('channel') or info.get('uploader_id') or 'Unknown',
             'formats': formats,
+            'chapters': chapters,
         }
 
         _info_cache.set(cache_key, {'response': result, 'raw': info})
@@ -518,11 +530,19 @@ def download_video():
             url = request.args.get('url', '').strip()
             format_id = request.args.get('format_id', '').strip()
             audio_only = request.args.get('audio_only', '').lower() in ('1', 'true', 'yes')
+            start_time = float(request.args.get('start_time', 0) or 0)
+            end_time = float(request.args.get('end_time', 0) or 0)
+            chapter_title = request.args.get('chapter_title', '').strip()
         else:
             data = request.get_json()
             url = (data or {}).get('url', '').strip()
             format_id = (data or {}).get('format_id', '').strip()
             audio_only = str((data or {}).get('audio_only', '')).lower() in ('1', 'true', 'yes')
+            start_time = float((data or {}).get('start_time', 0) or 0)
+            end_time = float((data or {}).get('end_time', 0) or 0)
+            chapter_title = str((data or {}).get('chapter_title', '')).strip()
+
+        clip_duration = (end_time - start_time) if (end_time > start_time > 0) else None
 
         if not url or not format_id:
             return jsonify({'error': 'url and format_id are required.'}), 400
@@ -540,7 +560,11 @@ def download_video():
             logger.info('download fetching info for %s', url[:60])
             info = _fetch_info(url)
 
-        safe_title = _safe_title(info.get('title', 'video'))
+        raw_title = info.get('title', 'video')
+        if chapter_title:
+            safe_title = _safe_title(f"{raw_title} - {chapter_title}")
+        else:
+            safe_title = _safe_title(raw_title)
 
         # Build platform-aware headers for ffmpeg.
         # YouTube CDN requires Referer + Origin; without them requests are 403'd
@@ -560,10 +584,13 @@ def download_video():
                 return jsonify({'error': 'No audio stream found for this video.'}), 400
 
             est_size = best_audio.get('filesize') or best_audio.get('filesize_approx')
-            cmd = [
-                'ffmpeg', '-y',
-                '-headers', ua_header,
-                '-i', best_audio['url'],
+            cmd = ['ffmpeg', '-y', '-headers', ua_header]
+            if start_time > 0:
+                cmd += ['-ss', str(start_time)]
+            cmd += ['-i', best_audio['url']]
+            if clip_duration is not None:
+                cmd += ['-t', str(clip_duration)]
+            cmd += [
                 '-vn',
                 '-c:a', 'libmp3lame',
                 '-b:a', '192k',
@@ -604,15 +631,24 @@ def download_video():
         )
         est_size = (video_size + audio_size) if video_size else None
 
-        cmd = ['ffmpeg', '-y', '-headers', ua_header, '-i', video_url]
+        cmd = ['ffmpeg', '-y', '-headers', ua_header]
+        if start_time > 0:
+            cmd += ['-ss', str(start_time)]
+        cmd += ['-i', video_url]
         if audio_url:
-            cmd += ['-headers', ua_header, '-i', audio_url]
+            cmd += ['-headers', ua_header]
+            if start_time > 0:
+                cmd += ['-ss', str(start_time)]
+            cmd += ['-i', audio_url]
 
         cmd += ['-map', '0:v:0']
         if audio_url:
             cmd += ['-map', '1:a:0']
         elif video_has_audio:
             cmd += ['-map', '0:a:0']
+
+        if clip_duration is not None:
+            cmd += ['-t', str(clip_duration)]
 
         cmd += [
             '-c:v', 'copy',

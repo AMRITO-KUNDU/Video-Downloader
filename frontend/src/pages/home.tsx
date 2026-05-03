@@ -10,10 +10,16 @@ import {
   CheckCircle2,
   Music2,
   ClipboardCheck,
+  ChevronDown,
+  ChevronUp,
+  ListVideo,
+  History,
+  Trash2,
 } from "lucide-react";
 import { FaYoutube, FaFacebook, FaInstagram } from "react-icons/fa";
-import { useGetVideoInfo, type VideoPlatform } from "@/hooks/use-video-info";
+import { useGetVideoInfo, type VideoPlatform, type VideoChapter } from "@/hooks/use-video-info";
 import { useDownload } from "@/hooks/use-download";
+import { useDownloadHistory } from "@/hooks/use-download-history";
 import { formatBytes } from "@/lib/utils";
 
 // ── Platform detection ────────────────────────────────────────────────────────
@@ -38,6 +44,14 @@ const PLATFORM_META: Record<
   facebook: { icon: FaFacebook, color: "#1877F2", label: "Facebook" },
   instagram: { icon: FaInstagram, color: "#E4405F", label: "Instagram" },
 };
+
+function formatSeconds(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  return `${m}:${String(sec).padStart(2, "0")}`;
+}
 
 // ── Skeleton ─────────────────────────────────────────────────────────────────
 function VideoSkeleton() {
@@ -71,11 +85,14 @@ export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState("");
   const [showClipboardHint, setShowClipboardHint] = useState(false);
+  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const clipboardChecked = useRef(false);
 
   const videoInfoMutation = useGetVideoInfo();
   const { state: dlState, download, cancel } = useDownload();
+  const { history, addEntry, removeEntry, clearHistory } = useDownloadHistory();
 
   const detectedPlatform = detectPlatform(inputValue);
   const PlatformIcon = detectedPlatform ? PLATFORM_META[detectedPlatform].icon : null;
@@ -108,6 +125,7 @@ export default function Home() {
   const submitUrl = useCallback((url: string) => {
     if (!url || !detectPlatform(url)) return;
     setSubmittedUrl(url);
+    setChaptersOpen(false);
     videoInfoMutation.mutate(url);
   }, [videoInfoMutation]);
 
@@ -120,7 +138,6 @@ export default function Home() {
     }
   };
 
-  // Paste & go: if the pasted content is a valid platform URL, auto-submit
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const text = e.clipboardData.getData("text").trim();
     if (text && detectPlatform(text)) {
@@ -132,6 +149,7 @@ export default function Home() {
     setInputValue("");
     setSubmittedUrl("");
     setShowClipboardHint(false);
+    setChaptersOpen(false);
     videoInfoMutation.reset();
     inputRef.current?.focus();
   };
@@ -147,6 +165,20 @@ export default function Home() {
   const isDownloading = dlState.id !== null;
   const dlPhase = isDownloading ? (dlState as any).phase as string : null;
   const dlProgress = dlPhase === "downloading" ? (dlState as any).progress as number : null;
+
+  // ── History record helper ─────────────────────────────────────────────────
+  const recordHistory = useCallback((formatId: string, quality: string, audioOnly: boolean) => {
+    if (!videoData || !submittedUrl) return;
+    addEntry({
+      url: submittedUrl,
+      title: videoData.title,
+      thumbnail: videoData.thumbnail,
+      platform: videoData.platform,
+      format_id: formatId,
+      quality,
+      audio_only: audioOnly,
+    });
+  }, [videoData, submittedUrl, addEntry]);
 
   return (
     <div className="min-h-screen flex flex-col items-center" style={{ background: "#F8F4F1" }}>
@@ -462,7 +494,11 @@ export default function Home() {
                                 disabled={isDownloading}
                                 phase={phase}
                                 progress={progress}
-                                onClick={() => download(submittedUrl, fmt.format_id, videoData.title, false)}
+                                onClick={() =>
+                                  download(submittedUrl, fmt.format_id, videoData.title, false, {
+                                    onSuccess: () => recordHistory(fmt.format_id, fmt.label, false),
+                                  })
+                                }
                               />
                             );
                           })}
@@ -475,13 +511,83 @@ export default function Home() {
                               disabled={isDownloading}
                               phase={dlState.id === audioFormat.format_id ? dlPhase : null}
                               progress={dlState.id === audioFormat.format_id ? dlProgress : null}
-                              onClick={() => download(submittedUrl, audioFormat.format_id, videoData.title, true)}
+                              onClick={() =>
+                                download(submittedUrl, audioFormat.format_id, videoData.title, true, {
+                                  onSuccess: () => recordHistory(audioFormat.format_id, "MP3", true),
+                                })
+                              }
                             />
                           </div>
                         )}
                       </>
                     );
                   })()}
+
+                  {/* Chapters section */}
+                  {videoData.chapters && videoData.chapters.length > 0 && (
+                    <div className="mt-3">
+                      <button
+                        onClick={() => setChaptersOpen((o) => !o)}
+                        className="w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors"
+                        style={{ background: "#F8F4F1", border: "1.5px solid #ede7e1", color: "#1C2437" }}
+                      >
+                        <span className="flex items-center gap-2">
+                          <ListVideo className="w-4 h-4" style={{ color: "#F98981" }} />
+                          {videoData.chapters.length} chapters
+                        </span>
+                        {chaptersOpen ? (
+                          <ChevronUp className="w-4 h-4 text-[#b5aca8]" />
+                        ) : (
+                          <ChevronDown className="w-4 h-4 text-[#b5aca8]" />
+                        )}
+                      </button>
+
+                      <AnimatePresence>
+                        {chaptersOpen && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="overflow-hidden"
+                          >
+                            <div
+                              className="mt-1.5 rounded-xl overflow-hidden"
+                              style={{ border: "1.5px solid #ede7e1" }}
+                            >
+                              {videoData.chapters.map((chapter, idx) => (
+                                <ChapterRow
+                                  key={idx}
+                                  chapter={chapter}
+                                  index={idx}
+                                  total={videoData.chapters.length}
+                                  disabled={isDownloading}
+                                  activeId={dlState.id}
+                                  dlPhase={dlPhase}
+                                  dlProgress={dlProgress}
+                                  onDownload={(fmt, audioOnly) => {
+                                    const dlId = `${fmt.format_id}-${chapter.start_time}`;
+                                    const isActive = dlState.id === dlId;
+                                    if (isActive) return;
+                                    const bestFmt = videoData.formats.find(
+                                      (f) => !f.audio_only
+                                    );
+                                    if (!bestFmt) return;
+                                    download(submittedUrl, bestFmt.format_id, videoData.title, audioOnly, {
+                                      startTime: chapter.start_time,
+                                      endTime: chapter.end_time,
+                                      chapterTitle: chapter.title,
+                                      onSuccess: () =>
+                                        recordHistory(bestFmt.format_id, `${bestFmt.label} · ${chapter.title}`, audioOnly),
+                                    });
+                                  }}
+                                />
+                              ))}
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+                  )}
                 </div>
               </motion.div>
             )}
@@ -506,6 +612,130 @@ export default function Home() {
               Tip: copied a link? Tap the box above — it'll be filled automatically.
             </p>
           </motion.div>
+        )}
+
+        {/* Download history */}
+        {history.length > 0 && (
+          <div className="w-full mt-2 mb-6">
+            <button
+              onClick={() => setHistoryOpen((o) => !o)}
+              className="w-full flex items-center justify-between px-1 py-2 text-sm font-medium"
+              style={{ color: "#7a6f6a" }}
+            >
+              <span className="flex items-center gap-2">
+                <History className="w-4 h-4" />
+                Recent downloads ({history.length})
+              </span>
+              <span className="flex items-center gap-2">
+                {historyOpen && (
+                  <span
+                    onClick={(e) => { e.stopPropagation(); clearHistory(); }}
+                    className="text-xs px-2 py-0.5 rounded-lg hover:bg-[#f0ebe7] transition-colors flex items-center gap-1"
+                    style={{ color: "#b5aca8" }}
+                  >
+                    <Trash2 className="w-3 h-3" /> Clear
+                  </span>
+                )}
+                {historyOpen ? (
+                  <ChevronUp className="w-4 h-4 text-[#b5aca8]" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-[#b5aca8]" />
+                )}
+              </span>
+            </button>
+
+            <AnimatePresence>
+              {historyOpen && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden"
+                >
+                  <div className="flex flex-col gap-2 pt-1">
+                    {history.map((entry) => {
+                      const meta = PLATFORM_META[entry.platform];
+                      const Icon = meta?.icon;
+                      const dlId = entry.format_id;
+                      const isActive = dlState.id === dlId && isDownloading;
+                      return (
+                        <div
+                          key={entry.id}
+                          className="flex items-center gap-3 rounded-xl bg-white px-3 py-2.5"
+                          style={{ border: "1.5px solid #ede7e1" }}
+                        >
+                          {/* Thumbnail */}
+                          <div className="w-14 h-9 rounded-lg overflow-hidden shrink-0 bg-[#eae4df]">
+                            {entry.thumbnail && (
+                              <img
+                                src={entry.thumbnail}
+                                alt={entry.title}
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            )}
+                          </div>
+
+                          {/* Info */}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium line-clamp-1" style={{ color: "#1C2437" }}>
+                              {entry.title}
+                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              {Icon && (
+                                <Icon className="w-3 h-3 shrink-0" style={{ color: meta.color }} />
+                              )}
+                              <span className="text-xs" style={{ color: "#b5aca8" }}>
+                                {entry.quality}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              onClick={() =>
+                                download(entry.url, entry.format_id, entry.title, entry.audio_only, {
+                                  onSuccess: () =>
+                                    addEntry({
+                                      url: entry.url,
+                                      title: entry.title,
+                                      thumbnail: entry.thumbnail,
+                                      platform: entry.platform,
+                                      format_id: entry.format_id,
+                                      quality: entry.quality,
+                                      audio_only: entry.audio_only,
+                                    }),
+                                })
+                              }
+                              disabled={isDownloading}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors disabled:opacity-40"
+                              style={{ background: isActive ? "#F0DEDC" : "#F8F4F1", border: "1.5px solid #ede7e1" }}
+                              title="Download again"
+                            >
+                              {isActive ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" style={{ color: "#F98981" }} />
+                              ) : (
+                                <DownloadIcon className="w-3.5 h-3.5 text-[#7a6f6a]" />
+                              )}
+                            </button>
+                            <button
+                              onClick={() => removeEntry(entry.id)}
+                              className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-[#f0ebe7]"
+                              style={{ color: "#c9c0bb" }}
+                              title="Remove"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
         )}
       </main>
 
@@ -556,7 +786,7 @@ function FormatButton({ label, filesize, isActive, disabled, phase, progress, on
         {phase && phase !== "error" ? (
           <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
-          <DownloadIcon />
+          <DownloadIcon className="w-4 h-4" />
         )}
       </div>
     </button>
@@ -609,16 +839,71 @@ function AudioButton({ filesize, isActive, disabled, phase, progress, onClick }:
         {phase && phase !== "error" ? (
           <Loader2 className="w-4 h-4 animate-spin" />
         ) : (
-          <DownloadIcon />
+          <DownloadIcon className="w-4 h-4" />
         )}
       </div>
     </button>
   );
 }
 
-function DownloadIcon() {
+interface ChapterRowProps {
+  chapter: VideoChapter;
+  index: number;
+  total: number;
+  disabled: boolean;
+  activeId: string | null;
+  dlPhase: string | null;
+  dlProgress: number | null;
+  onDownload: (fmt: any, audioOnly: boolean) => void;
+}
+
+function ChapterRow({ chapter, index, total, disabled, activeId, dlPhase, dlProgress, onDownload }: ChapterRowProps) {
+  const chapterId = `chapter-${chapter.start_time}`;
+  const isActive = activeId === chapterId;
+  const duration = chapter.end_time - chapter.start_time;
+
   return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+    <div
+      className="flex items-center justify-between px-3.5 py-2.5 gap-3"
+      style={{
+        background: isActive ? "#fff8f7" : "white",
+        borderBottom: index < total - 1 ? "1px solid #f0ebe7" : "none",
+      }}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium line-clamp-1" style={{ color: "#1C2437" }}>
+          {chapter.title}
+        </p>
+        <p className="text-xs mt-0.5" style={{ color: "#b5aca8" }}>
+          {formatSeconds(chapter.start_time)} · {formatSeconds(duration)}
+        </p>
+      </div>
+      <button
+        onClick={() => onDownload(null, false)}
+        disabled={disabled}
+        className="shrink-0 flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg transition-colors disabled:opacity-40"
+        style={{
+          background: isActive ? "#F0DEDC" : "#F8F4F1",
+          border: `1.5px solid ${isActive ? "#F98981" : "#ede7e1"}`,
+          color: "#1C2437",
+        }}
+      >
+        {isActive && (dlPhase === "preparing" || dlPhase === "downloading") ? (
+          <Loader2 className="w-3 h-3 animate-spin" style={{ color: "#F98981" }} />
+        ) : (
+          <DownloadIcon className="w-3 h-3 text-[#7a6f6a]" />
+        )}
+        {isActive && dlPhase === "downloading" && dlProgress !== null && dlProgress > 0
+          ? `${dlProgress}%`
+          : "MP4"}
+      </button>
+    </div>
+  );
+}
+
+function DownloadIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className ?? "w-4 h-4"} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 4v11" />
     </svg>
   );

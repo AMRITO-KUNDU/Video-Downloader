@@ -7,6 +7,14 @@ export type DownloadState =
   | { id: string; phase: "saving" }
   | { id: string; phase: "error"; message: string };
 
+export type DownloadOptions = {
+  audioOnly?: boolean;
+  startTime?: number;
+  endTime?: number;
+  chapterTitle?: string;
+  onSuccess?: () => void;
+};
+
 export function useDownload() {
   const [state, setState] = useState<DownloadState>({ id: null });
   const abortRef = useRef<AbortController | null>(null);
@@ -22,19 +30,28 @@ export function useDownload() {
     formatId: string,
     title: string,
     audioOnly = false,
+    options: DownloadOptions = {},
   ) => {
-    setState({ id: formatId, phase: "preparing" });
+    const { startTime, endTime, chapterTitle, onSuccess } = options;
+
+    const dlId = chapterTitle ? `${formatId}-${startTime}` : formatId;
+    setState({ id: dlId, phase: "preparing" });
 
     const controller = new AbortController();
     abortRef.current = controller;
 
     const params = new URLSearchParams({ url: videoUrl, format_id: formatId });
     if (audioOnly) params.set("audio_only", "true");
-    const apiUrl = `/api/video/download?${params}`;
+    if (startTime != null && startTime > 0) params.set("start_time", String(startTime));
+    if (endTime != null && endTime > 0) params.set("end_time", String(endTime));
+    if (chapterTitle) params.set("chapter_title", chapterTitle);
 
+    const apiUrl = `/api/video/download?${params}`;
     const ext = audioOnly ? "mp3" : "mp4";
     const mimeType = audioOnly ? "audio/mpeg" : "video/mp4";
-    const safeTitle = title.replace(/[^\w\s\-.]/g, "").trim().slice(0, 80) || "download";
+
+    const baseTitle = chapterTitle ? `${title} - ${chapterTitle}` : title;
+    const safeTitle = baseTitle.replace(/[^\w\s\-.]/g, "").trim().slice(0, 80) || "download";
     const safeFilename = `${safeTitle}.${ext}`;
 
     try {
@@ -56,7 +73,7 @@ export function useDownload() {
       const chunks: Uint8Array[] = [];
       let received = 0;
 
-      setState({ id: formatId, phase: "downloading", progress: 0 });
+      setState({ id: dlId, phase: "downloading", progress: 0 });
 
       while (true) {
         const { done, value } = await reader.read();
@@ -65,14 +82,14 @@ export function useDownload() {
         received += value.length;
         if (total > 0) {
           setState({
-            id: formatId,
+            id: dlId,
             phase: "downloading",
             progress: Math.min(99, Math.round((received / total) * 100)),
           });
         }
       }
 
-      setState({ id: formatId, phase: "saving" });
+      setState({ id: dlId, phase: "saving" });
 
       const blob = new Blob(chunks, { type: mimeType });
       const blobUrl = URL.createObjectURL(blob);
@@ -86,12 +103,13 @@ export function useDownload() {
 
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10_000);
       setState({ id: null });
+      onSuccess?.();
     } catch (err: any) {
       if (err.name === "AbortError") {
         setState({ id: null });
         return;
       }
-      setState({ id: formatId, phase: "error", message: err.message ?? "Download failed." });
+      setState({ id: dlId, phase: "error", message: err.message ?? "Download failed." });
       setTimeout(() => setState({ id: null }), 5000);
     } finally {
       abortRef.current = null;
