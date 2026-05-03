@@ -71,10 +71,12 @@ BASE_OPTS = {
     'socket_timeout': 30,
     'noplaylist': True,
     'http_headers': {'User-Agent': USER_AGENT},
-    # ios → android → web: ios is most reliable in 2025 for avoiding bot-detection
+    # tv_embedded does NOT require YouTube's Proof-of-Origin (PO) token,
+    # making it the most reliable client for anonymous server IPs in 2025.
+    # ios / mweb / web are kept as progressive fallbacks.
     'extractor_args': {
         'youtube': {
-            'player_client': ['ios', 'android', 'web'],
+            'player_client': ['tv_embedded', 'ios', 'mweb', 'web'],
         }
     },
 }
@@ -279,7 +281,11 @@ def _fetch_info(url: str) -> dict:
     """Fetch yt-dlp info with YouTube client fallback (ios → android → web)."""
     is_youtube = 'youtube.com' in url or 'youtu.be' in url
     client_chains = (
-        [['ios', 'android', 'web'], ['android', 'web'], ['web']]
+        [
+            ['tv_embedded', 'ios', 'mweb', 'web'],  # preferred — tv_embedded skips PO token
+            ['ios', 'mweb', 'web'],                  # retry without tv_embedded
+            ['mweb', 'web'],                         # last resort
+        ]
         if is_youtube else [[]]
     )
 
