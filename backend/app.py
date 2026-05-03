@@ -167,16 +167,21 @@ def _format_duration(seconds):
 def _get_formats(info):
     """Return best-per-resolution PROGRESSIVE (combined) video formats only.
 
-    Only formats that already contain both video and audio are returned.
-    These stream directly from the CDN with no ffmpeg merging needed,
-    which works for YouTube (360p/720p), Facebook, and Instagram.
+    Pass 1 (strict): formats where yt-dlp explicitly reports both vcodec and
+    acodec — the cleanest signal that the stream is already combined.
+
+    Pass 2 (fallback): any format with a video codec + URL. Used for platforms
+    like Instagram whose yt-dlp extractor sometimes leaves acodec blank even
+    though the MP4 file is a combined progressive stream. Since all video
+    downloads now go through the direct CDN proxy (no ffmpeg), a combined
+    stream with missing codec metadata still plays correctly once downloaded.
     """
     best: dict = {}
 
+    # Pass 1 — explicit combined (vcodec + acodec both present)
     for f in info.get('formats', []):
         vcodec = f.get('vcodec') or ''
         acodec = f.get('acodec') or 'none'
-        # Must have both video AND audio tracks
         if not vcodec or vcodec == 'none':
             continue
         if not acodec or acodec == 'none':
@@ -184,6 +189,24 @@ def _get_formats(info):
         height = f.get('height')
         if not height or not f.get('url'):
             continue
+        fps = f.get('fps') or 30
+        key = (height, 60 if fps > 35 else 30)
+        if key not in best or _score(f) > _score(best[key]):
+            best[key] = f
+
+    if best:
+        return best
+
+    # Pass 2 — fallback: any format with a video codec + URL.
+    # Catches Instagram / other platforms with incomplete codec metadata.
+    # Excludes audio-only streams (vcodec explicitly 'none').
+    for f in info.get('formats', []):
+        vcodec = f.get('vcodec') or ''
+        if not vcodec or vcodec == 'none':
+            continue
+        if not f.get('url'):
+            continue
+        height = f.get('height') or 0
         fps = f.get('fps') or 30
         key = (height, 60 if fps > 35 else 30)
         if key not in best or _score(f) > _score(best[key]):
