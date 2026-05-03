@@ -66,13 +66,12 @@ BASE_OPTS = {
     'no_warnings': True,
     'socket_timeout': 30,
     'http_headers': {'User-Agent': USER_AGENT},
-    # android_vr is the most reliable client for server-side use in yt-dlp 2026+.
-    # It requires no JS runtime and no PO token — unlike web/mweb/ios which need
-    # a Proof-of-Origin token since mid-2024. android_testsuite and tv_embedded
-    # were removed in yt-dlp 2026 and cause 'NoneType is not callable' if used.
+    # android_testsuite → tv_embedded → web fallback chain.
+    # android_testsuite was added to yt-dlp specifically to bypass
+    # YouTube's "Sign in to confirm you're not a bot" on server IPs.
     'extractor_args': {
         'youtube': {
-            'player_client': ['android_vr'],
+            'player_client': ['android_testsuite', 'tv_embedded', 'web'],
         }
     },
 }
@@ -238,28 +237,23 @@ def _best_audio_format(info):
 
 def _classify_error(e: Exception) -> str:
     msg = str(e).lower()
-    raw = str(e)
-    if 'nonetype' in msg and 'not callable' in msg:
-        return 'A yt-dlp internal error occurred — this usually resolves itself. Please try again.'
     if 'private video' in msg or ('private' in msg and 'video' in msg):
         return 'This video is private and cannot be downloaded.'
     if 'age-restricted' in msg or 'age restricted' in msg or 'age_gate' in msg or 'inappropriate' in msg:
         return 'This video is age-restricted and requires a signed-in account.'
     if 'not available in your country' in msg or ('geo' in msg and 'block' in msg):
         return 'This video is not available in this region.'
-    if 'not a bot' in msg or 'confirm you' in msg or 'precondition' in msg:
-        return 'YouTube is blocking this server right now. Please try again in a few minutes.'
+    if 'not a bot' in msg or 'confirm you' in msg:
+        return 'YouTube is blocking this server from downloading right now. Please try again in a moment.'
     if 'sign in' in msg or 'login required' in msg or 'log in to' in msg:
         return 'This video requires sign-in to access.'
     if 'video unavailable' in msg or 'has been removed' in msg or "doesn't exist" in msg:
         return 'This video is unavailable or has been removed.'
     if 'http error 429' in msg or 'too many requests' in msg:
         return 'YouTube rate-limited this request — please try again in a moment.'
-    if 'no video formats' in msg or 'unable to extract' in msg or 'no formats' in msg:
-        return 'Could not extract video data. YouTube may require updated cookies or a login — try again shortly.'
-    if 'drm' in msg or 'drm protected' in msg:
-        return 'This video is DRM-protected and cannot be downloaded.'
-    return f'Could not process this video: {raw}'
+    if 'unable to extract' in msg or 'no video formats' in msg or 'no formats' in msg:
+        return 'Could not extract video data — the link may be expired or unsupported.'
+    return f'Could not process this video. {str(e)}'
 
 
 def _safe_title(raw: str) -> str:
@@ -285,48 +279,31 @@ def _validate_url(url: str):
     return platform, None
 
 
-_BOT_DETECTION_PHRASES = (
-    'not a bot', 'confirm you', 'sign in to confirm',
-    'sign in to access', 'precondition check',
-)
+_BOT_DETECTION_PHRASES = ('not a bot', 'confirm you', 'sign in to confirm')
 
-_RETRIABLE_PHRASES = _BOT_DETECTION_PHRASES + (
-    'http error 429', 'too many requests', 'no video formats',
-    'nonetype', 'not callable', 'unable to extract', 'no formats available',
-)
-
-def _is_retriable_error(e: Exception) -> bool:
+def _is_bot_error(e: Exception) -> bool:
     msg = str(e).lower()
-    return any(p in msg for p in _RETRIABLE_PHRASES)
-
-
-# Valid yt-dlp 2026+ clients ordered by reliability on server IPs
-# (no JS runtime, no PO token required):
-#   android_vr   — works on servers, no PO token, no JS needed (priority 10)
-#   tv_downgraded — TV client, good fallback (priority 40)
-#   tv_simply    — simplified TV, no cookie support (priority 40)
-#   'default'    — let yt-dlp pick automatically for the environment
-_YT_CLIENT_CHAINS = [
-    ['android_vr'],
-    ['tv_downgraded'],
-    ['tv_simply'],
-    ['default'],
-]
+    return any(p in msg for p in _BOT_DETECTION_PHRASES)
 
 
 def _fetch_info(url: str) -> dict:
-    """Fetch yt-dlp info with per-client fallback chain.
+    """Fetch yt-dlp info with client fallback for YouTube bot-detection.
 
-    yt-dlp 2026 removed android_testsuite and tv_embedded. The new reliable
-    server-side client is android_vr (no JS runtime / no PO token required).
-    On transient failures we try tv_downgraded → tv_simply → yt-dlp default.
-    Non-YouTube URLs skip the chain and use BASE_OPTS directly.
+    Tries android_testsuite → tv_embedded → web in order. Each uses a
+    different YouTube API endpoint with separate bot-detection thresholds.
+    A 1.5-second pause between retries gives YouTube's rate-limiter a moment
+    to recover before the next attempt.
     """
     is_youtube = 'youtube.com' in url or 'youtu.be' in url
-    chains = _YT_CLIENT_CHAINS if is_youtube else [None]
+    client_chains = (
+        [['android_testsuite', 'tv_embedded', 'web'],
+         ['tv_embedded', 'web'],
+         ['web']]
+        if is_youtube else [[]]  # non-YouTube: use BASE_OPTS as-is
+    )
 
     last_error: Exception = RuntimeError('No clients attempted')
-    for i, client_list in enumerate(chains):
+    for i, client_list in enumerate(client_chains):
         try:
             extra = (
                 {'extractor_args': {'youtube': {'player_client': client_list}}}
@@ -339,12 +316,12 @@ def _fetch_info(url: str) -> dict:
             return info
         except Exception as e:
             last_error = e
-            if not _is_retriable_error(e):
-                raise
-            if i < len(chains) - 1:
-                logger.warning('client %s failed (%s), trying next… (%d/%d)',
-                               client_list, str(e)[:80], i + 1, len(chains))
-                time.sleep(1.0)
+            if not _is_bot_error(e):
+                raise  # not bot-detection — don't retry with other clients
+            if i < len(client_chains) - 1:
+                logger.warning('bot-detection on client %s, retrying… (%d/%d)',
+                               client_list, i + 1, len(client_chains))
+                time.sleep(1.5)
 
     raise last_error
 
@@ -515,17 +492,6 @@ def get_video_info():
         if len(title) > 200:
             title = title[:200] + '…'
 
-        raw_chapters = info.get('chapters') or []
-        chapters = [
-            {
-                'title': c.get('title') or f'Chapter {i + 1}',
-                'start_time': float(c.get('start_time') or 0),
-                'end_time': float(c.get('end_time') or 0),
-            }
-            for i, c in enumerate(raw_chapters)
-            if c.get('end_time', 0) > c.get('start_time', 0)
-        ]
-
         result = {
             'platform': platform,
             'title': title,
@@ -533,7 +499,6 @@ def get_video_info():
             'duration': _format_duration(info.get('duration')),
             'uploader': info.get('uploader') or info.get('channel') or info.get('uploader_id') or 'Unknown',
             'formats': formats,
-            'chapters': chapters,
         }
 
         _info_cache.set(cache_key, {'response': result, 'raw': info})
@@ -553,19 +518,11 @@ def download_video():
             url = request.args.get('url', '').strip()
             format_id = request.args.get('format_id', '').strip()
             audio_only = request.args.get('audio_only', '').lower() in ('1', 'true', 'yes')
-            start_time = float(request.args.get('start_time', 0) or 0)
-            end_time = float(request.args.get('end_time', 0) or 0)
-            chapter_title = request.args.get('chapter_title', '').strip()
         else:
             data = request.get_json()
             url = (data or {}).get('url', '').strip()
             format_id = (data or {}).get('format_id', '').strip()
             audio_only = str((data or {}).get('audio_only', '')).lower() in ('1', 'true', 'yes')
-            start_time = float((data or {}).get('start_time', 0) or 0)
-            end_time = float((data or {}).get('end_time', 0) or 0)
-            chapter_title = str((data or {}).get('chapter_title', '')).strip()
-
-        clip_duration = (end_time - start_time) if (end_time > start_time > 0) else None
 
         if not url or not format_id:
             return jsonify({'error': 'url and format_id are required.'}), 400
@@ -583,11 +540,7 @@ def download_video():
             logger.info('download fetching info for %s', url[:60])
             info = _fetch_info(url)
 
-        raw_title = info.get('title', 'video')
-        if chapter_title:
-            safe_title = _safe_title(f"{raw_title} - {chapter_title}")
-        else:
-            safe_title = _safe_title(raw_title)
+        safe_title = _safe_title(info.get('title', 'video'))
 
         # Build platform-aware headers for ffmpeg.
         # YouTube CDN requires Referer + Origin; without them requests are 403'd
@@ -607,13 +560,10 @@ def download_video():
                 return jsonify({'error': 'No audio stream found for this video.'}), 400
 
             est_size = best_audio.get('filesize') or best_audio.get('filesize_approx')
-            cmd = ['ffmpeg', '-y', '-headers', ua_header]
-            if start_time > 0:
-                cmd += ['-ss', str(start_time)]
-            cmd += ['-i', best_audio['url']]
-            if clip_duration is not None:
-                cmd += ['-t', str(clip_duration)]
-            cmd += [
+            cmd = [
+                'ffmpeg', '-y',
+                '-headers', ua_header,
+                '-i', best_audio['url'],
                 '-vn',
                 '-c:a', 'libmp3lame',
                 '-b:a', '192k',
@@ -654,24 +604,15 @@ def download_video():
         )
         est_size = (video_size + audio_size) if video_size else None
 
-        cmd = ['ffmpeg', '-y', '-headers', ua_header]
-        if start_time > 0:
-            cmd += ['-ss', str(start_time)]
-        cmd += ['-i', video_url]
+        cmd = ['ffmpeg', '-y', '-headers', ua_header, '-i', video_url]
         if audio_url:
-            cmd += ['-headers', ua_header]
-            if start_time > 0:
-                cmd += ['-ss', str(start_time)]
-            cmd += ['-i', audio_url]
+            cmd += ['-headers', ua_header, '-i', audio_url]
 
         cmd += ['-map', '0:v:0']
         if audio_url:
             cmd += ['-map', '1:a:0']
         elif video_has_audio:
             cmd += ['-map', '0:a:0']
-
-        if clip_duration is not None:
-            cmd += ['-t', str(clip_duration)]
 
         cmd += [
             '-c:v', 'copy',

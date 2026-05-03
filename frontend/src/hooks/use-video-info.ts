@@ -9,12 +9,6 @@ export type VideoFormat = {
   audio_only: boolean;
 };
 
-export type VideoChapter = {
-  title: string;
-  start_time: number;
-  end_time: number;
-};
-
 export type VideoPlatform = "youtube" | "facebook" | "instagram";
 
 export type VideoInfo = {
@@ -24,7 +18,6 @@ export type VideoInfo = {
   duration: string;
   uploader: string;
   formats: VideoFormat[];
-  chapters: VideoChapter[];
 };
 
 export function useGetVideoInfo() {
