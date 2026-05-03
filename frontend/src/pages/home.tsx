@@ -432,14 +432,24 @@ export default function Home() {
                             </button>
                           )}
                         </div>
-                        {dlPhase === "downloading" && dlProgress !== null && (
+                        {dlPhase === "downloading" && (
                           <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "#ede7e1" }}>
-                            <motion.div
-                              className="h-full rounded-full"
-                              style={{ background: "#F98981" }}
-                              animate={{ width: `${dlProgress}%` }}
-                              transition={{ ease: "linear", duration: 0.3 }}
-                            />
+                            {dlProgress === null ? (
+                              /* Indeterminate — Facebook CDN doesn't send Content-Length */
+                              <motion.div
+                                className="h-full rounded-full"
+                                style={{ background: "#F98981", width: "35%" }}
+                                animate={{ x: ["0%", "186%", "0%"] }}
+                                transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
+                              />
+                            ) : (
+                              <motion.div
+                                className="h-full rounded-full"
+                                style={{ background: "#F98981" }}
+                                animate={{ width: `${dlProgress}%` }}
+                                transition={{ ease: "linear", duration: 0.3 }}
+                              />
+                            )}
                           </div>
                         )}
                       </motion.div>

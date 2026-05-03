@@ -3,7 +3,7 @@ import { useCallback, useRef, useState } from "react";
 export type DownloadState =
   | { id: null }
   | { id: string; phase: "preparing" }
-  | { id: string; phase: "downloading"; progress: number }
+  | { id: string; phase: "downloading"; progress: number | null }
   | { id: string; phase: "saving" }
   | { id: string; phase: "error"; message: string };
 
@@ -47,6 +47,8 @@ export function useDownload() {
 
       const contentLength = response.headers.get("Content-Length");
       const total = contentLength ? parseInt(contentLength, 10) : 0;
+      // null = indeterminate (no Content-Length, e.g. Facebook CDN)
+      const initialProgress: number | null = total > 0 ? 0 : null;
 
       // Stream the response body — track progress if Content-Length is known,
       // otherwise show indeterminate. Avoids accumulating the entire file in a
@@ -56,7 +58,7 @@ export function useDownload() {
         const chunks: Uint8Array[] = [];
         let received = 0;
 
-        setState({ id: formatId, phase: "downloading", progress: 0 });
+        setState({ id: formatId, phase: "downloading", progress: initialProgress });
 
         while (true) {
           const { done, value } = await reader.read();
@@ -78,7 +80,7 @@ export function useDownload() {
       } else {
         // Fallback for environments without streaming ReadableStream support:
         // let the browser download it natively via blob().
-        setState({ id: formatId, phase: "downloading", progress: 0 });
+        setState({ id: formatId, phase: "downloading", progress: initialProgress });
         const blob = await response.blob();
         setState({ id: formatId, phase: "saving" });
         _triggerDownload(blob, safeFilename);
