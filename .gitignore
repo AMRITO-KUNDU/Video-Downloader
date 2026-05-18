@@ -48,6 +48,9 @@ Thumbs.db
 .cache/
 .local/
 
+# Generated branding assets
+attached_assets/
+
 # Build output
 backend/static/
 

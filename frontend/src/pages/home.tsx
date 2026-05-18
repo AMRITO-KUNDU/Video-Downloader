@@ -10,14 +10,16 @@ import {
   Music2,
   ClipboardCheck,
 } from "lucide-react";
-import { FaFacebook } from "react-icons/fa";
+import { FaFacebook, FaInstagram, FaYoutube } from "react-icons/fa";
 import { useGetVideoInfo, type VideoPlatform } from "@/hooks/use-video-info";
 import { useDownload } from "@/hooks/use-download";
 import { formatBytes } from "@/lib/utils";
 
 // ── Platform detection ────────────────────────────────────────────────────────
 const PLATFORM_PATTERNS: Record<string, RegExp> = {
+  youtube: /(youtube\.com\/|youtu\.be\/)/i,
   facebook: /(facebook\.com\/|fb\.watch\/|fb\.com\/)/i,
+  instagram: /(instagram\.com\/|instagr\.am\/)/i,
 };
 
 function detectPlatform(url: string): VideoPlatform | null {
@@ -31,7 +33,9 @@ const PLATFORM_META: Record<
   VideoPlatform,
   { icon: React.ComponentType<{ className?: string }>; color: string; label: string }
 > = {
+  youtube: { icon: FaYoutube, color: "#FF0000", label: "YouTube" },
   facebook: { icon: FaFacebook, color: "#1877F2", label: "Facebook" },
+  instagram: { icon: FaInstagram, color: "#E4405F", label: "Instagram" },
 };
 
 // ── Skeleton ─────────────────────────────────────────────────────────────────

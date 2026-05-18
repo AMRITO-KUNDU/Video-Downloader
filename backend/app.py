@@ -42,8 +42,16 @@ def rate_limit_handler(e):
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 PLATFORM_PATTERNS = {
+    'youtube': re.compile(
+        r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/',
+        re.IGNORECASE,
+    ),
     'facebook': re.compile(
         r'(https?://)?(www\.|m\.|web\.)?(facebook\.com|fb\.watch|fb\.com)/',
+        re.IGNORECASE,
+    ),
+    'instagram': re.compile(
+        r'(https?://)?(www\.)?(instagram\.com|instagr\.am)/',
         re.IGNORECASE,
     ),
 }
@@ -138,6 +146,145 @@ def _validate_url(url: str):
             'error': 'Please enter a valid YouTube, Facebook, or Instagram URL.'
         }), 400)
     return platform, None
+
+
+_IG_SHORTCODE_RE = re.compile(
+    r'(?:instagram\.com|instagr\.am)/(?:p|reel|tv)/([^/?#]+)/?',
+    re.IGNORECASE,
+)
+
+
+def _instagram_shortcode(url: str) -> str | None:
+    m = _IG_SHORTCODE_RE.search(url or '')
+    if not m:
+        return None
+    return (m.group(1) or '').strip() or None
+
+
+def _ig_headers() -> dict:
+    return {
+        'User-Agent': USER_AGENT,
+        'Referer': 'https://www.instagram.com/',
+        'Origin': 'https://www.instagram.com',
+    }
+
+
+def _try_instaloader_info(url: str) -> dict:
+    """Fallback Instagram extractor using Instaloader.
+
+    Returns: {'response': <VideoInfo>, 'raw': {'kind': 'instaloader', 'items': [...]}}
+    """
+    shortcode = _instagram_shortcode(url)
+    if not shortcode:
+        raise ValueError('Unsupported Instagram URL (missing shortcode).')
+
+    try:
+        import instaloader  # type: ignore
+    except Exception as e:
+        raise RuntimeError('Instagram support is not installed on the server.') from e
+
+    loader = instaloader.Instaloader(
+        quiet=True,
+        download_pictures=False,
+        download_videos=False,
+        download_video_thumbnails=False,
+        download_geotags=False,
+        save_metadata=False,
+        compress_json=False,
+    )
+
+    session_file = os.environ.get('INSTA_SESSIONFILE', '').strip()
+    username = os.environ.get('INSTA_USERNAME', '').strip()
+    password = os.environ.get('INSTA_PASSWORD', '').strip()
+
+    if session_file and os.path.exists(session_file):
+        try:
+            loader.load_session_from_file(username or None, session_file)
+        except Exception:
+            pass
+    elif username and password:
+        try:
+            loader.login(username, password)
+        except Exception:
+            pass
+
+    post = instaloader.Post.from_shortcode(loader.context, shortcode)
+
+    caption = (post.caption or '').strip()
+    title = (caption.splitlines()[0] if caption else f'Instagram {shortcode}')[:200]
+    uploader = getattr(post, 'owner_username', None) or 'Instagram'
+
+    items: list[dict] = []
+
+    def add_item(i: int, media_url: str | None, ext: str, content_type: str):
+        if not media_url:
+            return
+        items.append({
+            'format_id': f'ig:{shortcode}:{i}',
+            'url': media_url,
+            'ext': ext,
+            'content_type': content_type,
+        })
+
+    try:
+        typename = getattr(post, 'typename', '') or ''
+        if typename == 'GraphSidecar':
+            for idx, node in enumerate(post.get_sidecar_nodes(), start=1):
+                is_video = bool(getattr(node, 'is_video', False))
+                add_item(
+                    idx,
+                    getattr(node, 'video_url', None) if is_video else getattr(node, 'display_url', None),
+                    'mp4' if is_video else 'jpg',
+                    'video/mp4' if is_video else 'image/jpeg',
+                )
+        else:
+            is_video = bool(getattr(post, 'is_video', False))
+            add_item(
+                1,
+                getattr(post, 'video_url', None) if is_video else getattr(post, 'url', None),
+                'mp4' if is_video else 'jpg',
+                'video/mp4' if is_video else 'image/jpeg',
+            )
+    except Exception:
+        is_video = bool(getattr(post, 'is_video', False))
+        add_item(
+            1,
+            getattr(post, 'video_url', None) if is_video else getattr(post, 'url', None),
+            'mp4' if is_video else 'jpg',
+            'video/mp4' if is_video else 'image/jpeg',
+        )
+
+    if not items:
+        raise RuntimeError('No downloadable media found for this Instagram link.')
+
+    thumbnail = (
+        getattr(post, 'video_url', None)
+        or getattr(post, 'url', None)
+        or (items[0].get('url') if items else '')
+        or ''
+    )
+
+    formats = [
+        {
+            'format_id': it['format_id'],
+            'label': ('Video' if it['ext'] == 'mp4' else 'Image') + (f' {i}' if len(items) > 1 else ''),
+            'ext': it['ext'],
+            'filesize': 0,
+            'audio_only': False,
+        }
+        for i, it in enumerate(items, start=1)
+    ]
+
+    response = {
+        'platform': 'instagram',
+        'title': title,
+        'thumbnail': thumbnail,
+        'duration': 'Unknown',
+        'uploader': uploader,
+        'formats': formats,
+    }
+    raw = {'kind': 'instaloader', 'items': items}
+    return {'response': response, 'raw': raw}
 
 
 def _format_duration(seconds):
@@ -371,9 +518,17 @@ def get_video_info():
         def worker():
             try:
                 logger.info('fetching info: %s', url[:60])
-                info = _fetch_info(url)
-                result = _build_response(url, platform, info)
-                result_q.put(('ok', result))
+                try:
+                    info = _fetch_info(url)
+                    result = _build_response(url, platform, info)
+                    result_q.put(('ok', result))
+                except Exception as exc:
+                    if platform != 'instagram':
+                        raise
+                    logger.info('yt-dlp instagram failed, trying instaloader: %s', str(exc)[:160])
+                    fallback = _try_instaloader_info(url)
+                    _info_cache.set(url, fallback)
+                    result_q.put(('ok', fallback['response']))
             except Exception as exc:
                 result_q.put(('error', exc))
 
@@ -419,29 +574,47 @@ def download_video():
     try:
         cached = _info_cache.get(url)
         info = cached['raw'] if cached else _fetch_info(url)
-        safe_title = _safe_title(info.get('title', 'video'))
 
-        if audio_only or format_id == 'audio_only':
-            fmt = _get_best_audio(info)
-            if not fmt or not fmt.get('url'):
-                return jsonify({'error': 'No audio stream found for this video.'}), 400
-            cdn_url = fmt['url']
-            audio_ext = fmt.get('ext') or 'm4a'
-            content_type = 'audio/mp4' if audio_ext == 'm4a' else 'audio/webm'
-            filename = f'{safe_title}.{audio_ext}'
+        if isinstance(info, dict) and info.get('kind') == 'instaloader':
+            if audio_only:
+                return jsonify({'error': 'Audio-only download is not available for Instagram.'}), 400
+            item = next((it for it in info.get('items', []) if it.get('format_id') == format_id), None)
+            if not item or not item.get('url'):
+                return jsonify({'error': 'Selected Instagram media not found.'}), 400
+
+            cdn_url = item['url']
+            content_type = item.get('content_type') or ('video/mp4' if item.get('ext') == 'mp4' else 'image/jpeg')
+            ext = item.get('ext') or ('mp4' if 'video' in (content_type or '') else 'jpg')
+
+            title = (cached or {}).get('response', {}).get('title', 'instagram') if cached else 'instagram'
+            safe_title = _safe_title(title)
+            filename = f'{safe_title}.{ext}'
+            headers = _ig_headers()
+            est_size = None
         else:
-            fmt = next(
-                (f for f in info.get('formats', []) if f.get('format_id') == format_id),
-                None,
-            )
-            if not fmt or not fmt.get('url'):
-                return jsonify({'error': 'Selected format not found.'}), 400
-            cdn_url = fmt['url']
-            content_type = 'video/mp4'
-            filename = f'{safe_title}.mp4'
+            safe_title = _safe_title(info.get('title', 'video'))
 
-        est_size = fmt.get('filesize') or fmt.get('filesize_approx')
-        headers = _cdn_headers(platform)
+            if audio_only or format_id == 'audio_only':
+                fmt = _get_best_audio(info)
+                if not fmt or not fmt.get('url'):
+                    return jsonify({'error': 'No audio stream found for this video.'}), 400
+                cdn_url = fmt['url']
+                audio_ext = fmt.get('ext') or 'm4a'
+                content_type = 'audio/mp4' if audio_ext == 'm4a' else 'audio/webm'
+                filename = f'{safe_title}.{audio_ext}'
+            else:
+                fmt = next(
+                    (f for f in info.get('formats', []) if f.get('format_id') == format_id),
+                    None,
+                )
+                if not fmt or not fmt.get('url'):
+                    return jsonify({'error': 'Selected format not found.'}), 400
+                cdn_url = fmt['url']
+                content_type = 'video/mp4'
+                filename = f'{safe_title}.mp4'
+
+            est_size = fmt.get('filesize') or fmt.get('filesize_approx')
+            headers = _cdn_headers(platform)
 
         logger.info('proxy %s: %s', format_id, safe_title)
 
