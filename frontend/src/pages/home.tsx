@@ -181,7 +181,7 @@ export default function Home() {
                   Download any video
                 </h1>
                 <p className="text-base mb-8" style={{ color: "#7a6f6a" }}>
-                  Facebook
+                  YouTube Â· Facebook Â· Instagram
                 </p>
               </motion.div>
             )}
@@ -235,7 +235,9 @@ export default function Home() {
               <div className="flex items-center gap-3">
                 {!detectedPlatform && (
                   <div className="flex items-center gap-3">
+                    <FaYoutube className="w-4 h-4 text-[#b5aca8]" />
                     <FaFacebook className="w-4 h-4 text-[#b5aca8]" />
+                    <FaInstagram className="w-4 h-4 text-[#b5aca8]" />
                   </div>
                 )}
                 {inputValue && (

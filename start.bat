@@ -6,6 +6,7 @@ pushd backend
 if exist .venv\Scripts\activate.bat (
   call .venv\Scripts\activate.bat
 )
+set PYTHON_PORT=5001
 start /b "" cmd /c "python app.py"
 popd
 
