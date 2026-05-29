@@ -460,23 +460,23 @@ def _build_response(url: str, platform: str, info: dict) -> dict:
         })
 
     best_audio = _get_best_audio(info)
-    if best_audio:
-        audio_ext = best_audio.get('ext') or 'm4a'
-        formats.append({
-            'format_id': 'audio_only',
-            'label': 'Audio',
-            'ext': audio_ext,
-            'filesize': best_audio.get('filesize') or best_audio.get('filesize_approx', 0),
-            'audio_only': True,
-        })
-
-    # Always offer MP3 if ffmpeg is available and there's audio
+    # Offer MP3 (via ffmpeg) as the single audio option when available,
+    # otherwise fall back to native audio stream.
     if best_audio and FFMPEG_PATH:
         formats.append({
             'format_id': 'mp3',
             'label': 'MP3',
             'ext': 'mp3',
             'filesize': 0,
+            'audio_only': True,
+        })
+    elif best_audio:
+        audio_ext = best_audio.get('ext') or 'm4a'
+        formats.append({
+            'format_id': 'audio_only',
+            'label': 'Audio',
+            'ext': audio_ext,
+            'filesize': best_audio.get('filesize') or best_audio.get('filesize_approx', 0),
             'audio_only': True,
         })
 
