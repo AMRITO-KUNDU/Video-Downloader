@@ -181,7 +181,7 @@ export default function Home() {
                   Download any video
                 </h1>
                 <p className="text-base mb-8" style={{ color: "#7a6f6a" }}>
-                  YouTube Â· Facebook Â· Instagram
+                  YouTube · Facebook · Instagram
                 </p>
               </motion.div>
             )}
