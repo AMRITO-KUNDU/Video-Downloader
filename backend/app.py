@@ -3,6 +3,9 @@ import logging
 import os
 import queue
 import re
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
 import unicodedata
@@ -70,12 +73,30 @@ YDL_OPTS = {
     'http_headers': {'User-Agent': USER_AGENT},
 }
 
+# Instagram-specific yt-dlp options — more permissive headers
+YDL_OPTS_INSTAGRAM = {
+    **YDL_OPTS,
+    'http_headers': {
+        'User-Agent': USER_AGENT,
+        'Accept': '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://www.instagram.com/',
+        'Origin': 'https://www.instagram.com',
+        'Sec-Fetch-Dest': 'empty',
+        'Sec-Fetch-Mode': 'cors',
+        'Sec-Fetch-Site': 'same-origin',
+    },
+    'extractor_args': {'instagram': {'api': ['graphql']}},
+}
+
 CHUNK_SIZE = 256 * 1024  # 256 KB
 
 STATIC_DIR = os.environ.get(
     'STATIC_DIR',
     os.path.join(os.path.dirname(__file__), 'static'),
 )
+
+FFMPEG_PATH = shutil.which('ffmpeg') or 'ffmpeg'
 
 
 # ── TTL cache ─────────────────────────────────────────────────────────────────
@@ -314,12 +335,7 @@ _FB_FORMAT_HEIGHT = {'hd': 720, 'sd': 480}
 
 
 def _get_video_formats(info: dict) -> dict:
-    """Return best combined (video+audio) format per resolution.
-
-    Pass 1: explicit combined streams — vcodec AND acodec both set, neither 'none'.
-    Pass 2: Facebook-style sd/hd — no codec metadata at all (progressive combined).
-    Pass 3: vcodec set but acodec unspecified (not explicitly 'none') — incomplete metadata.
-    """
+    """Return best combined (video+audio) format per resolution."""
     best: dict = {}
 
     # Pass 1 — explicit combined streams
@@ -341,7 +357,7 @@ def _get_video_formats(info: dict) -> dict:
     if best:
         return best
 
-    # Pass 2 — Facebook sd/hd: no codec metadata at all (combined progressive)
+    # Pass 2 — Facebook sd/hd: no codec metadata at all
     for f in info.get('formats', []):
         if f.get('vcodec') is not None or f.get('acodec') is not None:
             continue
@@ -356,7 +372,7 @@ def _get_video_formats(info: dict) -> dict:
     if best:
         return best
 
-    # Pass 3 — vcodec set but acodec not explicitly 'none' (incomplete metadata)
+    # Pass 3 — vcodec set but acodec not explicitly 'none'
     for f in info.get('formats', []):
         vcodec = f.get('vcodec') or ''
         if not vcodec or vcodec == 'none':
@@ -405,16 +421,19 @@ def _classify_error(e: Exception) -> str:
         return 'No downloadable format was found for this video. It may be restricted or unavailable.'
     if 'requested format is not available' in msg or 'format is not available' in msg:
         return 'No downloadable format was found for this video. It may be restricted or unavailable.'
-    if 'not a bot' in msg or 'sign in to confirm your age' in msg or 'sign in' in msg or 'login required' in msg:
-        return 'This video requires a signed-in account to access.'
+    if 'login' in msg or 'log in' in msg or 'sign in' in msg or 'not a bot' in msg or 'checkpoint' in msg:
+        return 'Instagram requires a login to access this content. Try a public post or reel.'
     if 'unable to extract' in msg:
         return 'Could not extract video data — the link may be expired or unsupported.'
+    if 'instagram' in msg and ('blocked' in msg or 'restricted' in msg or 'challenge' in msg):
+        return 'Instagram is blocking this request. Try again in a moment, or use a public reel link.'
     return 'Could not fetch this video. Please check the link and try again.'
 
 
-def _fetch_info(url: str) -> dict:
-    """Fetch yt-dlp metadata for a Facebook URL."""
-    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+def _fetch_info(url: str, platform: str = '') -> dict:
+    """Fetch yt-dlp metadata."""
+    opts = YDL_OPTS_INSTAGRAM if platform == 'instagram' else YDL_OPTS
+    with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
     if info.get('_type') == 'playlist' and info.get('entries'):
         info = next((e for e in info['entries'] if e), info)
@@ -448,6 +467,16 @@ def _build_response(url: str, platform: str, info: dict) -> dict:
             'label': 'Audio',
             'ext': audio_ext,
             'filesize': best_audio.get('filesize') or best_audio.get('filesize_approx', 0),
+            'audio_only': True,
+        })
+
+    # Always offer MP3 if ffmpeg is available and there's audio
+    if best_audio and FFMPEG_PATH:
+        formats.append({
+            'format_id': 'mp3',
+            'label': 'MP3',
+            'ext': 'mp3',
+            'filesize': 0,
             'audio_only': True,
         })
 
@@ -493,7 +522,7 @@ def _sse(data: dict) -> str:
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route('/api/health')
 def health_check():
-    return jsonify({'status': 'ok', 'cache_entries': _info_cache.size()})
+    return jsonify({'status': 'ok', 'cache_entries': _info_cache.size(), 'ffmpeg': bool(FFMPEG_PATH)})
 
 
 @app.route('/api/video/info', methods=['POST'])
@@ -519,7 +548,7 @@ def get_video_info():
             try:
                 logger.info('fetching info: %s', url[:60])
                 try:
-                    info = _fetch_info(url)
+                    info = _fetch_info(url, platform)
                     result = _build_response(url, platform, info)
                     result_q.put(('ok', result))
                 except Exception as exc:
@@ -571,9 +600,13 @@ def download_video():
     if err:
         return err
 
+    # ── MP3 download via ffmpeg ────────────────────────────────────────────
+    if format_id == 'mp3':
+        return _download_mp3(url, platform)
+
     try:
         cached = _info_cache.get(url)
-        info = cached['raw'] if cached else _fetch_info(url)
+        info = cached['raw'] if cached else _fetch_info(url, platform)
 
         if isinstance(info, dict) and info.get('kind') == 'instaloader':
             if audio_only:
@@ -648,6 +681,87 @@ def download_video():
 
     except Exception as e:
         logger.error('download_video error: %s', e)
+        return jsonify({'error': _classify_error(e)}), 500
+
+
+def _download_mp3(url: str, platform: str):
+    """Download and convert to MP3 using yt-dlp + ffmpeg."""
+    if not FFMPEG_PATH:
+        return jsonify({'error': 'MP3 conversion is not available on this server.'}), 503
+
+    try:
+        cached = _info_cache.get(url)
+        if cached and cached.get('raw') and not isinstance(cached['raw'], dict):
+            info_title = cached.get('response', {}).get('title', 'audio')
+        else:
+            # fetch title only
+            with yt_dlp.YoutubeDL({**YDL_OPTS, 'skip_download': True}) as ydl:
+                meta = ydl.extract_info(url, download=False)
+            info_title = meta.get('title', 'audio')
+
+        safe_title = _safe_title(info_title)
+        filename = f'{safe_title}.mp3'
+
+        tmpdir = tempfile.mkdtemp()
+        out_template = os.path.join(tmpdir, 'audio.%(ext)s')
+
+        ydl_mp3_opts = {
+            **YDL_OPTS,
+            'format': 'bestaudio/best',
+            'outtmpl': out_template,
+            'ffmpeg_location': os.path.dirname(FFMPEG_PATH),
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+        }
+
+        with yt_dlp.YoutubeDL(ydl_mp3_opts) as ydl:
+            ydl.download([url])
+
+        # Find the output mp3 file
+        mp3_file = os.path.join(tmpdir, 'audio.mp3')
+        if not os.path.exists(mp3_file):
+            # Try any file in tmpdir
+            files = [f for f in os.listdir(tmpdir) if f.endswith('.mp3')]
+            if not files:
+                return jsonify({'error': 'MP3 conversion failed — no output file produced.'}), 500
+            mp3_file = os.path.join(tmpdir, files[0])
+
+        file_size = os.path.getsize(mp3_file)
+        logger.info('mp3 ready: %s (%d bytes)', safe_title, file_size)
+
+        def generate():
+            try:
+                with open(mp3_file, 'rb') as f:
+                    while True:
+                        chunk = f.read(CHUNK_SIZE)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                try:
+                    import shutil as _shutil
+                    _shutil.rmtree(tmpdir, ignore_errors=True)
+                except Exception:
+                    pass
+
+        return Response(
+            stream_with_context(generate()),
+            status=200,
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Type': 'audio/mpeg',
+                'Content-Length': str(file_size),
+                'Cache-Control': 'no-store',
+                'X-Accel-Buffering': 'no',
+                'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
+            },
+        )
+
+    except Exception as e:
+        logger.error('mp3 download error: %s', e)
         return jsonify({'error': _classify_error(e)}), 500
 
 

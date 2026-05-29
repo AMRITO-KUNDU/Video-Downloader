@@ -3,12 +3,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertCircle,
   Loader2,
-  ArrowUp,
   Clock,
   Film,
   X,
   Music2,
-  ClipboardCheck,
+  Download,
+  Sparkles,
+  Link2,
+  CheckCircle2,
 } from "lucide-react";
 import { FaFacebook, FaInstagram, FaYoutube } from "react-icons/fa";
 import { useGetVideoInfo, type VideoPlatform } from "@/hooks/use-video-info";
@@ -31,35 +33,32 @@ function detectPlatform(url: string): VideoPlatform | null {
 
 const PLATFORM_META: Record<
   VideoPlatform,
-  { icon: React.ComponentType<{ className?: string }>; color: string; label: string }
+  { icon: React.ComponentType<{ className?: string }>; color: string; bg: string; label: string }
 > = {
-  youtube: { icon: FaYoutube, color: "#FF0000", label: "YouTube" },
-  facebook: { icon: FaFacebook, color: "#1877F2", label: "Facebook" },
-  instagram: { icon: FaInstagram, color: "#E4405F", label: "Instagram" },
+  youtube: { icon: FaYoutube, color: "#FF0000", bg: "#fff0f0", label: "YouTube" },
+  facebook: { icon: FaFacebook, color: "#1877F2", bg: "#f0f4ff", label: "Facebook" },
+  instagram: { icon: FaInstagram, color: "#E4405F", bg: "#fff0f4", label: "Instagram" },
 };
 
 // ── Skeleton ─────────────────────────────────────────────────────────────────
 function VideoSkeleton() {
   return (
-    <div
-      className="rounded-2xl overflow-hidden bg-white shadow-[0_2px_16px_rgba(28,36,55,0.08)]"
-      style={{ border: "1.5px solid #ede7e1" }}
-    >
-      <div className="w-full aspect-video animate-pulse" style={{ background: "#eae4df" }} />
-      <div className="px-5 py-4">
-        <div className="flex items-start gap-2.5 mb-4">
-          <div className="w-4 h-4 mt-0.5 rounded shrink-0 animate-pulse" style={{ background: "#e2dbd6" }} />
-          <div className="flex-1 space-y-2">
-            <div className="h-3.5 rounded animate-pulse" style={{ background: "#e2dbd6" }} />
-            <div className="h-3.5 rounded animate-pulse w-2/3" style={{ background: "#e2dbd6" }} />
+    <div className="rounded-3xl overflow-hidden bg-white shadow-xl shadow-black/5 border border-gray-100">
+      <div className="w-full aspect-video animate-pulse bg-gray-100" />
+      <div className="p-5 space-y-4">
+        <div className="flex gap-3">
+          <div className="w-10 h-10 rounded-xl animate-pulse bg-gray-100 shrink-0" />
+          <div className="flex-1 space-y-2 pt-1">
+            <div className="h-4 rounded-full animate-pulse bg-gray-100" />
+            <div className="h-3 rounded-full animate-pulse bg-gray-100 w-1/2" />
           </div>
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-2">
+        <div className="grid grid-cols-3 gap-2">
           {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="h-[62px] rounded-xl animate-pulse" style={{ background: "#eae4df" }} />
+            <div key={i} className="h-16 rounded-2xl animate-pulse bg-gray-100" />
           ))}
         </div>
-        <div className="h-[62px] w-full rounded-xl animate-pulse" style={{ background: "#eae4df" }} />
+        <div className="h-14 w-full rounded-2xl animate-pulse bg-gray-100" />
       </div>
     </div>
   );
@@ -69,16 +68,15 @@ function VideoSkeleton() {
 export default function Home() {
   const [inputValue, setInputValue] = useState("");
   const [submittedUrl, setSubmittedUrl] = useState("");
-  const [showClipboardHint, setShowClipboardHint] = useState(false);
+  const [clipboardFilled, setClipboardFilled] = useState(false);
   const [loadingSecs, setLoadingSecs] = useState(0);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const clipboardChecked = useRef(false);
 
   const videoInfoMutation = useGetVideoInfo();
   const { state: dlState, download, cancel } = useDownload();
 
   const detectedPlatform = detectPlatform(inputValue);
-  const PlatformIcon = detectedPlatform ? PLATFORM_META[detectedPlatform].icon : null;
 
   // ── Clipboard auto-fill ───────────────────────────────────────────────────
   const tryClipboard = useCallback(async (onlyIfEmpty = true) => {
@@ -88,11 +86,11 @@ export default function Home() {
       const text = (await navigator.clipboard.readText()).trim();
       if (text && detectPlatform(text)) {
         setInputValue(text);
-        setShowClipboardHint(true);
-        setTimeout(() => setShowClipboardHint(false), 3000);
+        setClipboardFilled(true);
+        setTimeout(() => setClipboardFilled(false), 3000);
       }
     } catch {
-      // Permission denied or not available — silent fail
+      // Permission denied — silent fail
     }
   }, [inputValue]);
 
@@ -113,15 +111,14 @@ export default function Home() {
 
   const handleSubmit = () => submitUrl(inputValue.trim());
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  // Paste & go: if the pasted content is a valid platform URL, auto-submit
-  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     const text = e.clipboardData.getData("text").trim();
     if (text && detectPlatform(text)) {
       setTimeout(() => submitUrl(text), 80);
@@ -131,7 +128,7 @@ export default function Home() {
   const handleClear = () => {
     setInputValue("");
     setSubmittedUrl("");
-    setShowClipboardHint(false);
+    setClipboardFilled(false);
     videoInfoMutation.reset();
     inputRef.current?.focus();
   };
@@ -147,164 +144,219 @@ export default function Home() {
   const isDownloading = dlState.id !== null;
   const dlPhase = isDownloading ? (dlState as any).phase as string : null;
 
-  // ── Loading timer — must be after isLoading is declared ───────────────────
   useEffect(() => {
     if (!isLoading) { setLoadingSecs(0); return; }
     const t = setInterval(() => setLoadingSecs(s => s + 1), 1000);
     return () => clearInterval(t);
   }, [isLoading]);
 
+  const hasResults = videoData || isError || isLoading;
+
   return (
-    <div className="min-h-screen flex flex-col items-center" style={{ background: "#F8F4F1" }}>
+    <div className="min-h-screen flex flex-col" style={{ background: "linear-gradient(135deg, #0f0f13 0%, #16161d 50%, #0f0f13 100%)" }}>
+
       {/* Header */}
-      <header className="w-full flex items-center px-6 pt-5 pb-3">
-        <div className="flex items-center gap-2">
-          <img src="/icon-circle.png" alt="VidGrab" className="w-7 h-7" />
-          <span className="font-semibold text-base" style={{ color: "#1C2437" }}>VidGrab</span>
+      <header className="flex items-center justify-between px-6 py-4">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}>
+            <Download className="w-4 h-4 text-white" />
+          </div>
+          <span className="font-bold text-white text-lg tracking-tight">VidGrab</span>
+        </div>
+        <div className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full" style={{ background: "rgba(255,255,255,0.06)", color: "rgba(255,255,255,0.5)" }}>
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          Online
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-2xl mx-auto px-4 flex flex-col items-center">
-        {/* Hero heading — slides up when results load */}
-        <div
-          className="w-full text-center transition-all duration-500"
-          style={{ marginTop: videoData || isError || isLoading ? "2rem" : "20vh" }}
-        >
-          <AnimatePresence>
-            {!videoData && !isError && !isLoading && (
-              <motion.div
-                key="hero"
-                initial={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                <h1 className="text-3xl sm:text-4xl font-bold mb-2" style={{ color: "#1C2437" }}>
-                  Download any video
-                </h1>
-                <p className="text-base mb-8" style={{ color: "#7a6f6a" }}>
-                  YouTube · Facebook · Instagram
-                </p>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+      <main className="flex-1 flex flex-col items-center px-4 pb-16">
 
-        {/* Input card */}
-        <div className="w-full">
+        {/* Hero — hides once results show */}
+        <AnimatePresence>
+          {!hasResults && (
+            <motion.div
+              key="hero"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              transition={{ duration: 0.4 }}
+              className="text-center pt-16 pb-10 max-w-lg mx-auto"
+            >
+              <div className="inline-flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full mb-6" style={{ background: "rgba(99,102,241,0.15)", color: "#818cf8", border: "1px solid rgba(99,102,241,0.3)" }}>
+                <Sparkles className="w-3.5 h-3.5" />
+                Free · No account needed
+              </div>
+              <h1 className="text-4xl sm:text-5xl font-bold text-white leading-tight mb-4 tracking-tight">
+                Download any<br />
+                <span style={{ background: "linear-gradient(90deg, #6366f1, #a78bfa, #ec4899)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+                  video or audio
+                </span>
+              </h1>
+              <p className="text-base" style={{ color: "rgba(255,255,255,0.4)" }}>
+                YouTube, Facebook & Instagram — paste a link and grab it.
+              </p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Spacer when results showing */}
+        {hasResults && <div className="h-6" />}
+
+        {/* Search bar */}
+        <div className="w-full max-w-2xl">
           <div
-            className="w-full rounded-2xl bg-white shadow-[0_2px_16px_rgba(28,36,55,0.10)]"
-            style={{ border: "1.5px solid #ede7e1" }}
+            className="relative flex items-center rounded-2xl p-1.5 transition-all duration-200"
+            style={{
+              background: "rgba(255,255,255,0.07)",
+              border: `1.5px solid ${detectedPlatform ? "rgba(99,102,241,0.5)" : "rgba(255,255,255,0.1)"}`,
+              boxShadow: detectedPlatform ? "0 0 0 4px rgba(99,102,241,0.1)" : "none",
+            }}
           >
-            <div className="relative px-5 pt-4 pb-2">
-              <textarea
-                ref={inputRef}
-                rows={2}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKeyDown}
-                onFocus={() => tryClipboard(true)}
-                onPaste={handlePaste}
-                placeholder="Paste a video link…"
-                className="w-full resize-none bg-transparent outline-none text-base leading-relaxed placeholder:text-[#b5aca8] pr-28"
-                style={{ color: "#272320" }}
-              />
-
-              {/* Platform badge */}
-              <AnimatePresence>
-                {detectedPlatform && (
+            {/* Left icon */}
+            <div className="flex items-center pl-2 pr-1 shrink-0">
+              <AnimatePresence mode="wait">
+                {detectedPlatform ? (
                   <motion.div
                     key={detectedPlatform}
-                    initial={{ opacity: 0, scale: 0.85 }}
+                    initial={{ opacity: 0, scale: 0.7 }}
                     animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.85 }}
-                    className="absolute top-4 right-4 flex items-center gap-1.5 text-xs font-medium rounded-full px-2.5 py-1"
-                    style={{ background: "#F0DEDC", color: "#1C2437" }}
+                    exit={{ opacity: 0, scale: 0.7 }}
                   >
-                    {PlatformIcon && (
-                      <PlatformIcon
-                        className="w-3.5 h-3.5"
-                        style={{ color: PLATFORM_META[detectedPlatform].color }}
-                      />
-                    )}
-                    {PLATFORM_META[detectedPlatform].label}
+                    {(() => {
+                      const { icon: Icon, color } = PLATFORM_META[detectedPlatform];
+                      return <Icon className="w-5 h-5" style={{ color }} />;
+                    })()}
+                  </motion.div>
+                ) : (
+                  <motion.div key="link" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                    <Link2 className="w-4 h-4" style={{ color: "rgba(255,255,255,0.3)" }} />
                   </motion.div>
                 )}
               </AnimatePresence>
             </div>
 
-            <div className="flex items-center justify-between px-4 pb-4 pt-1">
-              <div className="flex items-center gap-3">
-                {!detectedPlatform && (
-                  <div className="flex items-center gap-3">
-                    <FaYoutube className="w-4 h-4 text-[#b5aca8]" />
-                    <FaFacebook className="w-4 h-4 text-[#b5aca8]" />
-                    <FaInstagram className="w-4 h-4 text-[#b5aca8]" />
-                  </div>
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onFocus={() => tryClipboard(true)}
+              onPaste={handlePaste}
+              placeholder="Paste a YouTube, Instagram or Facebook link…"
+              className="flex-1 bg-transparent outline-none text-sm px-2 py-2.5"
+              style={{ color: "rgba(255,255,255,0.9)", caretColor: "#818cf8" }}
+            />
+
+            {/* Right actions */}
+            <div className="flex items-center gap-1.5 pr-1">
+              <AnimatePresence>
+                {clipboardFilled && (
+                  <motion.span
+                    initial={{ opacity: 0, x: 8 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0 }}
+                    className="flex items-center gap-1 text-xs font-medium"
+                    style={{ color: "#34d399" }}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Pasted
+                  </motion.span>
                 )}
                 {inputValue && (
-                  <button
+                  <motion.button
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.8 }}
                     type="button"
                     onClick={handleClear}
-                    className="text-xs flex items-center gap-1 rounded-lg px-2 py-1 text-[#7a6f6a] hover:bg-[#f0ebe7] transition-colors"
+                    className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-white/10"
+                    style={{ color: "rgba(255,255,255,0.4)" }}
                   >
-                    <X className="w-3.5 h-3.5" /> Clear
-                  </button>
+                    <X className="w-3.5 h-3.5" />
+                  </motion.button>
                 )}
-              </div>
-
+              </AnimatePresence>
               <button
                 type="button"
                 onClick={handleSubmit}
-                disabled={isLoading || !inputValue.trim() || !detectPlatform(inputValue)}
-                className="w-9 h-9 rounded-xl flex items-center justify-center transition-all disabled:opacity-40"
-                style={{ background: "#1C2437", color: "white" }}
+                disabled={isLoading || !inputValue.trim() || !detectedPlatform}
+                className="flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)", color: "white", boxShadow: "0 2px 12px rgba(99,102,241,0.4)" }}
               >
                 {isLoading ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
-                  <ArrowUp className="w-4 h-4" />
+                  <>
+                    <Download className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Grab</span>
+                  </>
                 )}
               </button>
             </div>
           </div>
 
-          {/* Hint row below the input card */}
-          <div className="min-h-[1.5rem] mt-1.5 ml-1">
+          {/* Inline hints */}
+          <div className="h-6 mt-1.5 px-1">
             <AnimatePresence mode="wait">
-              {showClipboardHint && !isLoading && (
-                <motion.p
-                  key="clipboard"
-                  initial={{ opacity: 0, y: -4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="text-xs flex items-center gap-1.5"
-                  style={{ color: "#7a6f6a" }}
-                >
-                  <ClipboardCheck className="w-3.5 h-3.5" style={{ color: "#F98981" }} />
-                  URL detected from clipboard
-                </motion.p>
-              )}
-              {inputValue && !detectedPlatform && !showClipboardHint && (
+              {inputValue && !detectedPlatform && (
                 <motion.p
                   key="invalid"
                   initial={{ opacity: 0, y: -4 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0 }}
                   className="text-xs flex items-center gap-1.5"
-                  style={{ color: "#F98981" }}
+                  style={{ color: "#f87171" }}
                 >
                   <AlertCircle className="w-3.5 h-3.5" />
-                  Paste a YouTube, Facebook, or Instagram link
+                  Only YouTube, Facebook, and Instagram links are supported
+                </motion.p>
+              )}
+              {!inputValue && !hasResults && (
+                <motion.p
+                  key="tip"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className="text-xs"
+                  style={{ color: "rgba(255,255,255,0.25)" }}
+                >
+                  Tip: copied a link? Click the box above — it fills automatically.
                 </motion.p>
               )}
             </AnimatePresence>
           </div>
         </div>
 
+        {/* Platform pills — only in empty state */}
+        {!hasResults && !inputValue && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="flex items-center gap-2 mt-4"
+          >
+            {(["youtube", "facebook", "instagram"] as VideoPlatform[]).map((p) => {
+              const { icon: Icon, color, bg, label } = PLATFORM_META[p];
+              return (
+                <div
+                  key={p}
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full"
+                  style={{ background: "rgba(255,255,255,0.05)", color: "rgba(255,255,255,0.5)", border: "1px solid rgba(255,255,255,0.08)" }}
+                >
+                  <Icon className="w-3.5 h-3.5" style={{ color }} />
+                  {label}
+                </div>
+              );
+            })}
+          </motion.div>
+        )}
+
         {/* Results area */}
-        <div className="w-full mt-4 pb-10">
+        <div className="w-full max-w-2xl mt-6">
           <AnimatePresence mode="wait">
 
-            {/* Loading skeleton */}
+            {/* Loading */}
             {isLoading && (
               <motion.div key="skeleton" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                 <VideoSkeleton />
@@ -313,86 +365,84 @@ export default function Home() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     className="mt-3 text-center text-xs"
-                    style={{ color: "#7a6f6a" }}
+                    style={{ color: "rgba(255,255,255,0.3)" }}
                   >
-                    Server is waking up — first load can take up to 30 s…
+                    Fetching info… this can take up to 30 s for some links
                   </motion.p>
                 )}
               </motion.div>
             )}
 
-            {/* Fetch error */}
+            {/* Error */}
             {isError && !isLoading && (
               <motion.div
                 key="error"
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="rounded-2xl p-4"
-                style={{ background: "#fff0ef", border: "1.5px solid #fad4d3" }}
+                className="rounded-2xl p-4 flex items-start gap-3"
+                style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}
               >
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "#F98981" }} />
-                  <p className="text-sm" style={{ color: "#272320" }}>{errorMsg}</p>
+                <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-red-300">{errorMsg}</p>
+                  {(errorMsg.toLowerCase().includes('blocking') || errorMsg.toLowerCase().includes('try again') || errorMsg.toLowerCase().includes('moment')) && (
+                    <button
+                      onClick={() => submitUrl(inputValue.trim())}
+                      className="mt-2 text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors"
+                    >
+                      Retry
+                    </button>
+                  )}
                 </div>
-                {(errorMsg.toLowerCase().includes('blocking') || errorMsg.toLowerCase().includes('try again')) && (
-                  <button
-                    onClick={() => submitUrl(inputValue.trim())}
-                    className="mt-3 ml-7 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
-                    style={{ background: "#F98981", color: "white" }}
-                  >
-                    Retry
-                  </button>
-                )}
               </motion.div>
             )}
 
-            {/* Video result card */}
+            {/* Result card */}
             {videoData && !isLoading && (
               <motion.div
                 key="result"
-                initial={{ opacity: 0, y: 12 }}
+                initial={{ opacity: 0, y: 16 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0 }}
-                className="rounded-2xl overflow-hidden bg-white shadow-[0_2px_16px_rgba(28,36,55,0.08)]"
-                style={{ border: "1.5px solid #ede7e1" }}
+                className="rounded-3xl overflow-hidden bg-white shadow-2xl shadow-black/30"
               >
                 {/* Thumbnail */}
                 {videoData.thumbnail && (
-                  <div className="relative w-full aspect-video bg-[#f0ebe7]">
+                  <div className="relative w-full aspect-video bg-gray-100">
                     <img
                       src={videoData.thumbnail}
                       alt={videoData.title}
                       className="w-full h-full object-cover"
                       referrerPolicy="no-referrer"
                     />
+                    {/* Overlay gradient */}
+                    <div className="absolute inset-0" style={{ background: "linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 50%)" }} />
                     {videoData.duration && videoData.duration !== "Unknown" && (
-                      <span
-                        className="absolute bottom-2.5 right-2.5 text-xs font-mono font-semibold px-2 py-0.5 rounded-md flex items-center gap-1"
-                        style={{ background: "rgba(28,36,55,0.80)", color: "white" }}
-                      >
+                      <span className="absolute bottom-3 right-3 text-xs font-mono font-bold px-2 py-1 rounded-lg flex items-center gap-1.5 text-white" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
                         <Clock className="w-3 h-3" />
                         {videoData.duration}
                       </span>
                     )}
+                    {videoData.platform && PLATFORM_META[videoData.platform] && (() => {
+                      const { icon: Icon, color, label } = PLATFORM_META[videoData.platform];
+                      return (
+                        <span className="absolute bottom-3 left-3 text-xs font-semibold px-2 py-1 rounded-lg flex items-center gap-1.5 text-white" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }}>
+                          <Icon className="w-3 h-3" style={{ color }} />
+                          {label}
+                        </span>
+                      );
+                    })()}
                   </div>
                 )}
 
-                <div className="px-5 py-4">
-                  {/* Title row */}
-                  <div className="flex items-start gap-2.5 mb-4">
-                    {videoData.platform && PLATFORM_META[videoData.platform] && (() => {
-                      const { icon: Icon, color } = PLATFORM_META[videoData.platform];
-                      return <Icon className="w-4 h-4 mt-0.5 shrink-0" style={{ color }} />;
-                    })()}
-                    <div className="min-w-0">
-                      <p className="font-semibold text-sm leading-snug line-clamp-2" style={{ color: "#1C2437" }}>
-                        {videoData.title}
-                      </p>
-                      <p className="text-xs mt-0.5" style={{ color: "#7a6f6a" }}>
-                        {videoData.uploader}
-                      </p>
-                    </div>
+                <div className="p-5">
+                  {/* Title & uploader */}
+                  <div className="mb-5">
+                    <p className="font-bold text-base leading-snug text-gray-900 line-clamp-2 mb-1">
+                      {videoData.title}
+                    </p>
+                    <p className="text-sm text-gray-500">{videoData.uploader}</p>
                   </div>
 
                   {/* Active download banner */}
@@ -402,29 +452,21 @@ export default function Home() {
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
-                        className="mb-3 overflow-hidden"
+                        className="mb-4 overflow-hidden"
                       >
-                        <div
-                          className="flex items-center justify-between rounded-xl px-3.5 py-2.5"
-                          style={{ background: "#F0DEDC", border: "1.5px solid #F98981" }}
-                        >
-                          <span className="flex items-center gap-2 text-sm font-medium" style={{ color: "#1C2437" }}>
-                            <Loader2 className="w-4 h-4 animate-spin" style={{ color: "#F98981" }} />
-                            Starting download…
+                        <div className="flex items-center justify-between rounded-2xl px-4 py-3" style={{ background: "linear-gradient(135deg, #ede9fe, #e0e7ff)", border: "1px solid #c4b5fd" }}>
+                          <span className="flex items-center gap-2 text-sm font-semibold text-violet-700">
+                            <Loader2 className="w-4 h-4 animate-spin text-violet-500" />
+                            Preparing your download…
                           </span>
-                          <button
-                            onClick={cancel}
-                            className="text-xs font-medium px-2.5 py-1 rounded-lg transition-colors hover:bg-[#fad4d3]"
-                            style={{ color: "#7a6f6a" }}
-                          >
+                          <button onClick={cancel} className="text-xs text-violet-400 hover:text-violet-600 transition-colors font-medium">
                             Dismiss
                           </button>
                         </div>
-                        {/* Indeterminate slide bar while browser initiates the download */}
-                        <div className="mt-1.5 h-1 rounded-full overflow-hidden" style={{ background: "#ede7e1" }}>
+                        <div className="mt-1.5 h-1 rounded-full overflow-hidden bg-violet-100">
                           <motion.div
-                            className="h-full rounded-full"
-                            style={{ background: "#F98981", width: "35%" }}
+                            className="h-full rounded-full bg-violet-400"
+                            style={{ width: "35%" }}
                             animate={{ x: ["0%", "186%", "0%"] }}
                             transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
                           />
@@ -432,53 +474,68 @@ export default function Home() {
                       </motion.div>
                     )}
 
-                    {/* Download error */}
                     {dlState.id !== null && dlPhase === "error" && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
                         exit={{ opacity: 0, height: 0 }}
-                        className="mb-3 flex items-start gap-2 rounded-xl p-3 text-sm overflow-hidden"
-                        style={{ background: "#fff0ef", border: "1.5px solid #fad4d3", color: "#272320" }}
+                        className="mb-4 flex items-start gap-2 rounded-2xl p-3.5 text-sm overflow-hidden bg-red-50 border border-red-100 text-red-700"
                       >
-                        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "#F98981" }} />
+                        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-400" />
                         {(dlState as any).message}
                       </motion.div>
                     )}
                   </AnimatePresence>
 
-                  {/* Format buttons */}
+                  {/* Format grid */}
                   {(() => {
                     const videoFormats = videoData.formats.filter((f) => !f.audio_only);
-                    const audioFormat = videoData.formats.find((f) => f.audio_only);
+                    const audioFormats = videoData.formats.filter((f) => f.audio_only);
                     return (
-                      <>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                          {videoFormats.map((fmt) => {
-                            const isActive = dlState.id === fmt.format_id && isDownloading;
-                            return (
-                              <FormatButton
-                                key={fmt.format_id}
-                                label={fmt.label}
-                                filesize={fmt.filesize}
-                                isActive={isActive}
-                                disabled={isDownloading}
-                                onClick={() => download(submittedUrl, fmt.format_id, videoData.title, false)}
-                              />
-                            );
-                          })}
-                        </div>
-                        {audioFormat && (
-                          <div className="mt-2">
-                            <AudioButton
-                              filesize={audioFormat.filesize}
-                              isActive={dlState.id === audioFormat.format_id && isDownloading}
-                              disabled={isDownloading}
-                              onClick={() => download(submittedUrl, audioFormat.format_id, videoData.title, true, audioFormat.ext)}
-                            />
+                      <div className="space-y-3">
+                        {videoFormats.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Video</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                              {videoFormats.map((fmt) => {
+                                const isActive = dlState.id === fmt.format_id && isDownloading;
+                                return (
+                                  <FormatButton
+                                    key={fmt.format_id}
+                                    label={fmt.label}
+                                    filesize={fmt.filesize}
+                                    ext="mp4"
+                                    isActive={isActive}
+                                    disabled={isDownloading}
+                                    onClick={() => download(submittedUrl, fmt.format_id, videoData.title, false)}
+                                  />
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
-                      </>
+                        {audioFormats.length > 0 && (
+                          <div>
+                            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Audio</p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {audioFormats.map((fmt) => {
+                                const isActive = dlState.id === fmt.format_id && isDownloading;
+                                return (
+                                  <AudioFormatButton
+                                    key={fmt.format_id}
+                                    label={fmt.label}
+                                    ext={fmt.ext}
+                                    filesize={fmt.filesize}
+                                    isActive={isActive}
+                                    disabled={isDownloading}
+                                    onClick={() => download(submittedUrl, fmt.format_id, videoData.title, true, fmt.ext)}
+                                  />
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     );
                   })()}
                 </div>
@@ -487,28 +544,33 @@ export default function Home() {
           </AnimatePresence>
         </div>
 
-        {/* Empty state */}
-        {!videoData && !isLoading && !isError && !inputValue && (
+        {/* Feature pills — empty state */}
+        {!hasResults && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="mt-6 flex flex-col items-center gap-3"
+            transition={{ delay: 0.3 }}
+            className="mt-12 flex flex-wrap justify-center gap-3"
           >
-            <div className="flex items-center gap-4 text-sm" style={{ color: "#b5aca8" }}>
-              <span className="flex items-center gap-1.5"><Film className="w-4 h-4" /> HD quality</span>
-              <span className="w-1 h-1 rounded-full bg-current" />
-              <span>No account needed</span>
-              <span className="w-1 h-1 rounded-full bg-current" />
-              <span className="flex items-center gap-1.5"><Music2 className="w-4 h-4" /> Audio support</span>
-            </div>
-            <p className="text-xs" style={{ color: "#c9c0bb" }}>
-              Tip: copied a link? Tap the box above — it'll be filled automatically.
-            </p>
+            {[
+              { icon: Film, label: "HD & 4K quality" },
+              { icon: Music2, label: "MP3 audio" },
+              { icon: Download, label: "No watermark" },
+            ].map(({ icon: Icon, label }) => (
+              <div
+                key={label}
+                className="flex items-center gap-2 text-xs font-medium px-4 py-2 rounded-full"
+                style={{ background: "rgba(255,255,255,0.04)", color: "rgba(255,255,255,0.35)", border: "1px solid rgba(255,255,255,0.07)" }}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {label}
+              </div>
+            ))}
           </motion.div>
         )}
       </main>
 
-      <footer className="w-full text-center py-6 text-xs" style={{ color: "#b5aca8" }}>
+      <footer className="text-center py-6 text-xs" style={{ color: "rgba(255,255,255,0.15)" }}>
         VidGrab · powered by yt-dlp
       </footer>
     </div>
@@ -519,78 +581,72 @@ export default function Home() {
 interface FormatButtonProps {
   label: string;
   filesize: number;
+  ext: string;
   isActive: boolean;
   disabled: boolean;
   onClick: () => void;
 }
 
-function FormatButton({ label, filesize, isActive, disabled, onClick }: FormatButtonProps) {
+function FormatButton({ label, filesize, ext, isActive, disabled, onClick }: FormatButtonProps) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="relative flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left transition-colors disabled:cursor-not-allowed overflow-hidden"
+      className="group flex items-center justify-between rounded-2xl px-3.5 py-3 text-left transition-all disabled:cursor-not-allowed"
       style={{
-        background: isActive ? "#F0DEDC" : "#F8F4F1",
-        border: `1.5px solid ${isActive ? "#F98981" : "#ede7e1"}`,
+        background: isActive ? "#ede9fe" : "#f9fafb",
+        border: `1.5px solid ${isActive ? "#c4b5fd" : "#e5e7eb"}`,
       }}
-      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.background = "#F0DEDC"; }}
-      onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#F8F4F1"; }}
+      onMouseEnter={(e) => { if (!disabled && !isActive) (e.currentTarget as HTMLElement).style.background = "#f5f3ff"; }}
+      onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#f9fafb"; }}
     >
       <div>
-        <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>{label}</p>
-        <p className="text-xs" style={{ color: "#7a6f6a" }}>{filesize ? formatBytes(filesize) : "mp4"}</p>
+        <p className="text-sm font-bold text-gray-800">{label}</p>
+        <p className="text-xs text-gray-400 mt-0.5">{filesize ? formatBytes(filesize) : ext}</p>
       </div>
-      <div className="shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
-        {isActive ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadIcon />}
+      <div className="shrink-0 ml-2 w-7 h-7 rounded-xl flex items-center justify-center transition-colors" style={{ background: isActive ? "#7c3aed" : "#e5e7eb", color: isActive ? "white" : "#9ca3af" }}>
+        {isActive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
       </div>
     </button>
   );
 }
 
-interface AudioButtonProps {
+interface AudioFormatButtonProps {
+  label: string;
+  ext: string;
   filesize: number;
   isActive: boolean;
   disabled: boolean;
   onClick: () => void;
 }
 
-function AudioButton({ filesize, isActive, disabled, onClick }: AudioButtonProps) {
+function AudioFormatButton({ label, ext, filesize, isActive, disabled, onClick }: AudioFormatButtonProps) {
+  const isMp3 = ext === "mp3";
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      className="relative w-full flex items-center justify-between rounded-xl px-3.5 py-2.5 text-left transition-colors disabled:cursor-not-allowed overflow-hidden"
+      className="flex items-center gap-3 rounded-2xl px-3.5 py-3 text-left w-full transition-all disabled:cursor-not-allowed"
       style={{
-        background: isActive ? "#F0DEDC" : "#F8F4F1",
-        border: `1.5px solid ${isActive ? "#F98981" : "#ede7e1"}`,
+        background: isActive ? "#ede9fe" : "#f9fafb",
+        border: `1.5px solid ${isActive ? "#c4b5fd" : "#e5e7eb"}`,
       }}
-      onMouseEnter={(e) => { if (!disabled) (e.currentTarget as HTMLElement).style.background = "#F0DEDC"; }}
-      onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#F8F4F1"; }}
+      onMouseEnter={(e) => { if (!disabled && !isActive) (e.currentTarget as HTMLElement).style.background = "#f5f3ff"; }}
+      onMouseLeave={(e) => { if (!isActive) (e.currentTarget as HTMLElement).style.background = "#f9fafb"; }}
     >
-      <div className="flex items-center gap-2.5">
-        <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-          style={{ background: isActive ? "#F98981" : "#e8e2dd", color: isActive ? "white" : "#7a6f6a" }}
-        >
-          <Music2 className="w-3.5 h-3.5" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold" style={{ color: "#1C2437" }}>Audio</p>
-          <p className="text-xs" style={{ color: "#7a6f6a" }}>{filesize ? formatBytes(filesize) : "best quality"}</p>
-        </div>
+      <div
+        className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 transition-colors"
+        style={{ background: isActive ? "#7c3aed" : isMp3 ? "#f0fdf4" : "#f3f4f6", color: isActive ? "white" : isMp3 ? "#16a34a" : "#6b7280" }}
+      >
+        <Music2 className="w-4 h-4" />
       </div>
-      <div className="shrink-0 ml-2" style={{ color: isActive ? "#F98981" : "#b5aca8" }}>
-        {isActive ? <Loader2 className="w-4 h-4 animate-spin" /> : <DownloadIcon />}
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-bold text-gray-800">{label}</p>
+        <p className="text-xs text-gray-400">{filesize ? formatBytes(filesize) : ext.toUpperCase()}</p>
+      </div>
+      <div className="shrink-0 w-7 h-7 rounded-xl flex items-center justify-center transition-colors" style={{ background: isActive ? "#7c3aed" : "#e5e7eb", color: isActive ? "white" : "#9ca3af" }}>
+        {isActive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
       </div>
     </button>
-  );
-}
-
-function DownloadIcon() {
-  return (
-    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 4v11" />
-    </svg>
   );
 }
