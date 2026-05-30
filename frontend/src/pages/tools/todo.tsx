@@ -1,27 +1,20 @@
-import { useState, useEffect, useRef } from "react";
+import { useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { CheckSquare, Plus, Trash2, Circle, CheckCircle2, ChevronDown, Calendar, Flag } from "lucide-react";
+import { CheckSquare, Plus, Trash2, Circle, CheckCircle2, Calendar, Flag } from "lucide-react";
 import ToolLayout from "@/components/ToolLayout";
 
-const ACCENT = "#6750A4";
+const accentColor = "#8b5cf6";
 const STORAGE_KEY = "swifttools_todos_v1";
 
 type Priority = "low" | "medium" | "high";
 type Filter = "all" | "active" | "done";
 
-interface Todo {
-  id: string;
-  text: string;
-  done: boolean;
-  priority: Priority;
-  dueDate: string;
-  createdAt: number;
-}
+interface Todo { id: string; text: string; done: boolean; priority: Priority; dueDate: string; createdAt: number; }
 
 const PRIORITY_META: Record<Priority, { label: string; color: string; bg: string }> = {
-  high:   { label: "High",   color: "#C00000", bg: "#FFDAD6" },
-  medium: { label: "Medium", color: "#7A5700", bg: "#FDECC4" },
-  low:    { label: "Low",    color: "#006D3A", bg: "#BBEDCB" },
+  high:   { label: "High",   color: "#ef4444", bg: "#fef2f2" },
+  medium: { label: "Medium", color: "#f59e0b", bg: "#fffbeb" },
+  low:    { label: "Low",    color: "#10b981", bg: "#f0fdf4" },
 };
 
 function load(): Todo[] { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; } }
@@ -34,126 +27,95 @@ export default function TodoTool() {
   const [dueDate, setDueDate] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const [showForm, setShowForm] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const persist = (t: Todo[]) => { setTodos(t); save(t); };
-
   const addTodo = () => {
     if (!text.trim()) return;
     persist([{ id: crypto.randomUUID(), text: text.trim(), done: false, priority, dueDate, createdAt: Date.now() }, ...todos]);
     setText(""); setDueDate(""); setPriority("medium"); setShowForm(false);
   };
+  const toggle = (id: string) => persist(todos.map((t) => t.id === id ? { ...t, done: !t.done } : t));
+  const remove = (id: string) => persist(todos.filter((t) => t.id !== id));
+  const clearDone = () => persist(todos.filter((t) => !t.done));
 
-  const toggle = (id: string) => persist(todos.map(t => t.id === id ? { ...t, done: !t.done } : t));
-  const remove = (id: string) => persist(todos.filter(t => t.id !== id));
-  const clearDone = () => persist(todos.filter(t => !t.done));
-
-  const filtered = todos.filter(t => filter === "all" ? true : filter === "active" ? !t.done : t.done);
-  const doneCount = todos.filter(t => t.done).length;
-  const activeCount = todos.filter(t => !t.done).length;
-
+  const filtered = todos.filter((t) => filter === "all" ? true : filter === "active" ? !t.done : t.done);
+  const doneCount = todos.filter((t) => t.done).length;
+  const activeCount = todos.filter((t) => !t.done).length;
   const isOverdue = (t: Todo) => !t.done && t.dueDate && new Date(t.dueDate) < new Date(new Date().toDateString());
 
   return (
-    <ToolLayout icon={<CheckSquare style={{ width: 16, height: 16 }} />} title="To-Do List" accentColor={ACCENT}>
+    <ToolLayout icon={<CheckSquare className="w-4 h-4" />} title="To-Do List" accentColor={accentColor}>
       <div>
-        <h2 className="md-headline-small" style={{ color: "var(--md-on-surface)", marginBottom: 4 }}>To-Do List</h2>
-        <p className="md-body-medium" style={{ color: "var(--md-on-surface-variant)" }}>
-          Manage tasks with priorities and due dates. Saved in your browser.
-        </p>
+        <h2 className="text-2xl font-bold text-slate-900 mb-1">To-Do List</h2>
+        <p className="text-slate-400 text-sm">Manage tasks with priorities and due dates. Saved in your browser.</p>
       </div>
 
-      {/* Stats row */}
+      {/* Filter + clear */}
       {todos.length > 0 && (
-        <div style={{ display: "flex", gap: 8 }}>
-          {(["all", "active", "done"] as Filter[]).map(f => (
-            <button key={f} onClick={() => setFilter(f)} className="md-state-layer"
+        <div className="flex items-center gap-2 flex-wrap">
+          {(["all", "active", "done"] as Filter[]).map((f) => (
+            <button key={f} onClick={() => setFilter(f)}
+              className="text-xs font-medium px-3 py-1.5 rounded-full transition-colors"
               style={{
-                padding: "6px 16px", borderRadius: "var(--md-shape-full)", border: "none",
-                background: filter === f ? ACCENT : "var(--md-surface-container-low)",
-                color: filter === f ? "#fff" : "var(--md-on-surface-variant)",
-                cursor: "pointer", fontFamily: "'Roboto',sans-serif", fontSize: 13, fontWeight: 500,
-                transition: "background 150ms, color 150ms",
+                background: filter === f ? accentColor : "#f1f5f9",
+                color: filter === f ? "white" : "#64748b",
               }}>
               {f === "all" ? `All (${todos.length})` : f === "active" ? `Active (${activeCount})` : `Done (${doneCount})`}
             </button>
           ))}
           {doneCount > 0 && (
-            <button onClick={clearDone} className="md-state-layer"
-              style={{
-                padding: "6px 16px", borderRadius: "var(--md-shape-full)",
-                border: "1px solid var(--md-outline-variant)", background: "transparent",
-                color: "var(--md-on-surface-variant)", cursor: "pointer",
-                fontFamily: "'Roboto',sans-serif", fontSize: 13, fontWeight: 500, marginLeft: "auto",
-              }}>
+            <button onClick={clearDone} className="ml-auto text-xs font-medium text-slate-400 hover:text-slate-600 transition-colors">
               Clear done
             </button>
           )}
         </div>
       )}
 
-      {/* Add task card */}
-      <div style={{
-        background: "var(--md-surface-container-lowest)", borderRadius: "var(--md-shape-lg)",
-        boxShadow: "var(--md-elevation-1)", overflow: "hidden",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px" }}>
-          <div style={{ width: 24, height: 24, borderRadius: "var(--md-shape-full)", border: `2px solid ${ACCENT}`, flexShrink: 0 }} />
-          <input ref={inputRef} value={text} onChange={e => setText(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter") addTodo(); }}
+      {/* Add task */}
+      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden shadow-sm">
+        <div className="flex items-center gap-3 px-5 py-3.5">
+          <Circle className="w-5 h-5 shrink-0" style={{ color: accentColor }} />
+          <input value={text} onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") addTodo(); }}
             onFocus={() => setShowForm(true)}
             placeholder="Add a task…"
-            style={{
-              flex: 1, border: "none", outline: "none", background: "transparent",
-              fontFamily: "'Roboto',sans-serif", fontSize: 15, color: "var(--md-on-surface)",
-            }} />
+            className="flex-1 bg-transparent outline-none text-sm text-slate-800 placeholder:text-slate-300"
+          />
         </div>
 
         <AnimatePresence>
           {showForm && (
-            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-              style={{ overflow: "hidden", borderTop: "1px solid var(--md-outline-variant)" }}>
-              <div style={{ padding: "12px 16px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-                {/* Priority selector */}
-                <div style={{ display: "flex", gap: 6 }}>
+            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+              <div className="px-5 pb-4 pt-1 border-t border-slate-50 flex items-center gap-3 flex-wrap">
+                <div className="flex gap-1.5">
                   {(Object.entries(PRIORITY_META) as [Priority, typeof PRIORITY_META[Priority]][]).map(([key, meta]) => (
                     <button key={key} onClick={() => setPriority(key)}
-                      className="md-state-layer"
+                      className="flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-full transition-colors"
                       style={{
-                        display: "flex", alignItems: "center", gap: 4,
-                        padding: "4px 10px", borderRadius: "var(--md-shape-full)", border: "none",
-                        background: priority === key ? meta.bg : "var(--md-surface-container-low)",
-                        color: priority === key ? meta.color : "var(--md-on-surface-variant)",
-                        cursor: "pointer", fontFamily: "'Roboto',sans-serif", fontSize: 12, fontWeight: 500,
+                        background: priority === key ? meta.bg : "#f8fafc",
+                        color: priority === key ? meta.color : "#94a3b8",
+                        border: `1px solid ${priority === key ? meta.color + "44" : "#e2e8f0"}`,
                       }}>
-                      <Flag style={{ width: 12, height: 12 }} />
-                      {meta.label}
+                      <Flag className="w-2.5 h-2.5" />{meta.label}
                     </button>
                   ))}
                 </div>
-                {/* Due date */}
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: "var(--md-shape-full)", border: "1px solid var(--md-outline-variant)", background: "var(--md-surface-container-low)" }}>
-                  <Calendar style={{ width: 13, height: 13, color: "var(--md-on-surface-variant)", flexShrink: 0 }} />
-                  <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)}
-                    style={{ border: "none", outline: "none", background: "transparent", fontFamily: "'Roboto',sans-serif", fontSize: 12, color: "var(--md-on-surface)" }} />
+                <div className="flex items-center gap-1.5 text-xs text-slate-400 bg-slate-50 rounded-lg px-3 py-1.5 border border-slate-100">
+                  <Calendar className="w-3.5 h-3.5" />
+                  <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+                    className="outline-none bg-transparent text-xs text-slate-600" />
                 </div>
-                <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                  <button onClick={() => { setShowForm(false); setText(""); setDueDate(""); }} className="md-state-layer"
-                    style={{
-                      padding: "0 16px", height: 36, borderRadius: "var(--md-shape-full)",
-                      border: "1px solid var(--md-outline)", background: "transparent",
-                      cursor: "pointer", color: "var(--md-on-surface-variant)",
-                      fontFamily: "'Roboto',sans-serif", fontSize: 14, fontWeight: 500,
-                    }}>Cancel</button>
-                  <button onClick={addTodo} disabled={!text.trim()} className="md-state-layer"
-                    style={{
-                      padding: "0 24px", height: 36, borderRadius: "var(--md-shape-full)",
-                      border: "none", background: text.trim() ? ACCENT : "var(--md-surface-container-highest)",
-                      color: text.trim() ? "#fff" : "var(--md-on-surface-variant)",
-                      cursor: text.trim() ? "pointer" : "not-allowed",
-                      fontFamily: "'Roboto',sans-serif", fontSize: 14, fontWeight: 500,
-                      transition: "background 150ms",
-                    }}>Add task</button>
+                <div className="ml-auto flex gap-2">
+                  <button onClick={() => { setShowForm(false); setText(""); }}
+                    className="text-xs font-medium px-3 py-1.5 rounded-lg text-slate-400 hover:bg-slate-50 transition-colors border border-slate-100">
+                    Cancel
+                  </button>
+                  <button onClick={addTodo} disabled={!text.trim()}
+                    className="flex items-center gap-1.5 text-xs font-medium px-4 py-1.5 rounded-lg text-white transition-opacity disabled:opacity-40"
+                    style={{ background: accentColor }}>
+                    <Plus className="w-3.5 h-3.5" /> Add task
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -162,68 +124,50 @@ export default function TodoTool() {
       </div>
 
       {/* Task list */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div className="flex flex-col gap-2">
         <AnimatePresence>
           {filtered.length === 0 && (
-            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-              style={{ textAlign: "center", padding: "40px 24px" }}>
-              <div style={{ width: 64, height: 64, borderRadius: "var(--md-shape-xl)", margin: "0 auto 12px", background: ACCENT + "1A", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <CheckSquare style={{ width: 28, height: 28, color: ACCENT }} />
+            <motion.div key="empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12">
+              <div className="w-14 h-14 rounded-2xl mx-auto mb-3 flex items-center justify-center" style={{ background: `${accentColor}15` }}>
+                <CheckSquare className="w-6 h-6" style={{ color: accentColor }} />
               </div>
-              <p className="md-body-medium" style={{ color: "var(--md-on-surface-variant)" }}>
-                {filter === "done" ? "No completed tasks yet" : filter === "active" ? "All tasks done!" : "No tasks yet — add one above"}
+              <p className="text-slate-400 text-sm">
+                {filter === "done" ? "No completed tasks" : filter === "active" ? "All tasks done!" : "No tasks yet — add one above"}
               </p>
             </motion.div>
           )}
 
-          {filtered.map(todo => {
+          {filtered.map((todo) => {
             const meta = PRIORITY_META[todo.priority];
             const overdue = isOverdue(todo);
             return (
               <motion.div key={todo.id}
-                initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 16 }}
+                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 12 }}
                 layout
-                style={{
-                  display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px",
-                  background: "var(--md-surface-container-lowest)", borderRadius: "var(--md-shape-md)",
-                  boxShadow: "var(--md-elevation-1)",
-                  opacity: todo.done ? 0.6 : 1, transition: "opacity 200ms",
-                  borderLeft: `3px solid ${meta.color}`,
-                }}>
-                {/* Checkbox */}
-                <button onClick={() => toggle(todo.id)}
-                  style={{ border: "none", background: "none", cursor: "pointer", padding: 0, flexShrink: 0, marginTop: 2, color: todo.done ? "#006D3A" : "var(--md-outline)" }}>
-                  {todo.done
-                    ? <CheckCircle2 style={{ width: 22, height: 22 }} />
-                    : <Circle style={{ width: 22, height: 22 }} />}
+                className="flex items-start gap-3 p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                style={{ opacity: todo.done ? 0.6 : 1, borderLeft: `3px solid ${meta.color}` }}>
+                <button onClick={() => toggle(todo.id)} className="mt-0.5 shrink-0 transition-colors"
+                  style={{ color: todo.done ? "#10b981" : "#cbd5e1" }}>
+                  {todo.done ? <CheckCircle2 className="w-5 h-5" /> : <Circle className="w-5 h-5" />}
                 </button>
-
-                {/* Content */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p className="md-body-medium" style={{ color: "var(--md-on-surface)", textDecoration: todo.done ? "line-through" : "none", wordBreak: "break-word" }}>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800" style={{ textDecoration: todo.done ? "line-through" : "none" }}>
                     {todo.text}
                   </p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
-                    <span className="md-label-small" style={{ padding: "2px 8px", borderRadius: "var(--md-shape-full)", background: meta.bg, color: meta.color }}>
+                  <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: meta.bg, color: meta.color }}>
                       {meta.label}
                     </span>
                     {todo.dueDate && (
-                      <span className="md-label-small" style={{ display: "flex", alignItems: "center", gap: 4, color: overdue ? "var(--md-error)" : "var(--md-on-surface-variant)" }}>
-                        <Calendar style={{ width: 11, height: 11 }} />
+                      <span className="text-[10px] flex items-center gap-1" style={{ color: overdue ? "#ef4444" : "#94a3b8" }}>
+                        <Calendar className="w-2.5 h-2.5" />
                         {overdue ? "Overdue · " : ""}{new Date(todo.dueDate + "T00:00:00").toLocaleDateString(undefined, { month: "short", day: "numeric" })}
                       </span>
                     )}
                   </div>
                 </div>
-
-                {/* Delete */}
-                <button onClick={() => remove(todo.id)} className="md-state-layer"
-                  style={{
-                    width: 36, height: 36, borderRadius: "var(--md-shape-full)", border: "none",
-                    background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                    color: "var(--md-on-surface-variant)", flexShrink: 0,
-                  }}>
-                  <Trash2 style={{ width: 16, height: 16 }} />
+                <button onClick={() => remove(todo.id)} className="shrink-0 p-1.5 rounded-lg hover:bg-red-50 text-slate-200 hover:text-red-400 transition-colors">
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </motion.div>
             );

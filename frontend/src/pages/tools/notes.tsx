@@ -3,15 +3,10 @@ import { AnimatePresence, motion } from "framer-motion";
 import { FileText, Plus, Trash2, Save, Search, X, Clock } from "lucide-react";
 import ToolLayout from "@/components/ToolLayout";
 
-const ACCENT = "#1565C0";
+const accentColor = "#3b82f6";
 const STORAGE_KEY = "swifttools_notes_v1";
 
-interface Note {
-  id: string;
-  title: string;
-  body: string;
-  updatedAt: number;
-}
+interface Note { id: string; title: string; body: string; updatedAt: number; }
 
 function timeAgo(ts: number) {
   const diff = Date.now() - ts;
@@ -21,31 +16,24 @@ function timeAgo(ts: number) {
   return `${Math.floor(diff / 86400000)}d ago`;
 }
 
-function loadNotes(): Note[] {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
-}
-function saveNotes(notes: Note[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(notes));
-}
+function load(): Note[] { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; } }
+function persist(notes: Note[]) { localStorage.setItem(STORAGE_KEY, JSON.stringify(notes)); }
 
 export default function NotesTool() {
-  const [notes, setNotes] = useState<Note[]>(loadNotes);
-  const [activeId, setActiveId] = useState<string | null>(notes[0]?.id ?? null);
+  const [notes, setNotes] = useState<Note[]>(load);
+  const [activeId, setActiveId] = useState<string | null>(load()[0]?.id ?? null);
   const [search, setSearch] = useState("");
   const [saved, setSaved] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
-  const bodyRef = useRef<HTMLTextAreaElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const active = notes.find(n => n.id === activeId) ?? null;
-
-  const filtered = notes.filter(n =>
+  const active = notes.find((n) => n.id === activeId) ?? null;
+  const filtered = notes.filter((n) =>
     !search || n.title.toLowerCase().includes(search.toLowerCase()) || n.body.toLowerCase().includes(search.toLowerCase())
   );
 
-  const persist = (updated: Note[]) => {
-    setNotes(updated);
-    saveNotes(updated);
+  const update = (updated: Note[]) => {
+    setNotes(updated); persist(updated);
     setSaved(true);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => setSaved(false), 1500);
@@ -54,97 +42,66 @@ export default function NotesTool() {
   const createNote = () => {
     const note: Note = { id: crypto.randomUUID(), title: "Untitled note", body: "", updatedAt: Date.now() };
     const updated = [note, ...notes];
-    persist(updated);
-    setActiveId(note.id);
+    update(updated); setActiveId(note.id);
     setTimeout(() => titleRef.current?.select(), 60);
   };
 
-  const updateNote = (field: "title" | "body", value: string) => {
+  const updateField = (field: "title" | "body", value: string) => {
     if (!activeId) return;
-    persist(notes.map(n => n.id === activeId ? { ...n, [field]: value, updatedAt: Date.now() } : n));
+    update(notes.map((n) => n.id === activeId ? { ...n, [field]: value, updatedAt: Date.now() } : n));
   };
 
   const deleteNote = (id: string) => {
-    const updated = notes.filter(n => n.id !== id);
-    persist(updated);
+    const updated = notes.filter((n) => n.id !== id);
+    update(updated);
     if (activeId === id) setActiveId(updated[0]?.id ?? null);
   };
 
   useEffect(() => () => { if (saveTimer.current) clearTimeout(saveTimer.current); }, []);
 
   return (
-    <ToolLayout icon={<FileText style={{ width: 16, height: 16 }} />} title="Notes" accentColor={ACCENT}>
+    <ToolLayout icon={<FileText className="w-4 h-4" />} title="Notes" accentColor={accentColor}>
       <div>
-        <h2 className="md-headline-small" style={{ color: "var(--md-on-surface)", marginBottom: 4 }}>Notes</h2>
-        <p className="md-body-medium" style={{ color: "var(--md-on-surface-variant)" }}>
-          Your notes are saved privately in this browser. Cloud sync coming soon.
-        </p>
+        <h2 className="text-2xl font-bold text-slate-900 mb-1">Notes</h2>
+        <p className="text-slate-400 text-sm">Your notes are saved privately in this browser. Cloud sync coming soon.</p>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 12, minHeight: 480 }}>
-
-        {/* ── Sidebar ── */}
-        <div style={{
-          display: "flex", flexDirection: "column", gap: 8,
-          background: "var(--md-surface-container-low)",
-          borderRadius: "var(--md-shape-lg)", padding: 12, overflow: "hidden",
-        }}>
+      <div className="grid gap-3" style={{ gridTemplateColumns: "200px 1fr", minHeight: 480 }}>
+        {/* Sidebar */}
+        <div className="flex flex-col gap-2 bg-slate-50 rounded-2xl p-3 border border-slate-100">
           {/* Search */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: "var(--md-surface-container-lowest)",
-            borderRadius: "var(--md-shape-full)", padding: "6px 12px",
-            border: "1px solid var(--md-outline-variant)",
-          }}>
-            <Search style={{ width: 14, height: 14, color: "var(--md-on-surface-variant)", flexShrink: 0 }} />
-            <input value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search…"
-              style={{ flex: 1, border: "none", outline: "none", background: "transparent", fontFamily: "'Roboto',sans-serif", fontSize: 13, color: "var(--md-on-surface)" }} />
-            {search && <button onClick={() => setSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: "var(--md-on-surface-variant)", padding: 0 }}>
-              <X style={{ width: 12, height: 12 }} />
-            </button>}
+          <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 border border-slate-100">
+            <Search className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search…"
+              className="flex-1 bg-transparent outline-none text-xs text-slate-700 placeholder:text-slate-300" />
+            {search && <button onClick={() => setSearch("")} className="text-slate-300 hover:text-slate-500"><X className="w-3 h-3" /></button>}
           </div>
 
-          {/* New note button — M3 Filled Tonal */}
-          <button onClick={createNote} className="md-state-layer"
-            style={{
-              display: "flex", alignItems: "center", gap: 6, width: "100%",
-              padding: "8px 12px", borderRadius: "var(--md-shape-full)", border: "none",
-              background: ACCENT + "1A", color: ACCENT, cursor: "pointer",
-              fontFamily: "'Roboto',sans-serif", fontSize: 13, fontWeight: 500,
-            }}>
-            <Plus style={{ width: 16, height: 16 }} /> New note
+          <button onClick={createNote}
+            className="flex items-center gap-2 text-xs font-semibold px-3 py-2 rounded-xl transition-colors"
+            style={{ background: `${accentColor}15`, color: accentColor }}>
+            <Plus className="w-3.5 h-3.5" /> New note
           </button>
 
-          {/* Note list */}
-          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+          <div className="flex-1 overflow-y-auto flex flex-col gap-1">
             <AnimatePresence>
               {filtered.length === 0 && (
-                <p className="md-body-small" style={{ color: "var(--md-on-surface-variant)", textAlign: "center", padding: "16px 0" }}>
-                  {search ? "No matches" : "No notes yet"}
-                </p>
+                <p className="text-[11px] text-slate-400 text-center py-4">{search ? "No matches" : "No notes yet"}</p>
               )}
-              {filtered.map(note => (
+              {filtered.map((note) => (
                 <motion.button key={note.id}
                   initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }}
                   onClick={() => setActiveId(note.id)}
-                  className="md-state-layer"
+                  className="text-left w-full px-3 py-2.5 rounded-xl transition-colors"
                   style={{
-                    textAlign: "left", width: "100%", padding: "10px 10px",
-                    borderRadius: "var(--md-shape-sm)", border: "none",
-                    background: activeId === note.id ? ACCENT + "18" : "transparent",
-                    cursor: "pointer",
-                    borderLeft: activeId === note.id ? `3px solid ${ACCENT}` : "3px solid transparent",
+                    background: activeId === note.id ? `${accentColor}12` : "transparent",
+                    borderLeft: `2px solid ${activeId === note.id ? accentColor : "transparent"}`,
                   }}>
-                  <p className="md-label-large" style={{ color: "var(--md-on-surface)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {note.title || "Untitled"}
-                  </p>
-                  <p className="md-body-small" style={{ color: "var(--md-on-surface-variant)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {note.body || "Empty"}
-                  </p>
-                  <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
-                    <Clock style={{ width: 10, height: 10, color: "var(--md-on-surface-variant)" }} />
-                    <span className="md-label-small" style={{ color: "var(--md-on-surface-variant)" }}>{timeAgo(note.updatedAt)}</span>
+                  <p className="text-xs font-semibold text-slate-800 truncate">{note.title || "Untitled"}</p>
+                  <p className="text-[10px] text-slate-400 truncate mt-0.5">{note.body || "Empty"}</p>
+                  <div className="flex items-center gap-1 mt-1">
+                    <Clock className="w-2.5 h-2.5 text-slate-300" />
+                    <span className="text-[10px] text-slate-300">{timeAgo(note.updatedAt)}</span>
                   </div>
                 </motion.button>
               ))}
@@ -152,83 +109,42 @@ export default function NotesTool() {
           </div>
         </div>
 
-        {/* ── Editor ── */}
+        {/* Editor */}
         {active ? (
-          <div style={{
-            display: "flex", flexDirection: "column", gap: 0,
-            background: "var(--md-surface-container-lowest)",
-            borderRadius: "var(--md-shape-lg)", boxShadow: "var(--md-elevation-1)",
-            overflow: "hidden",
-          }}>
-            {/* Toolbar */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
-              borderBottom: "1px solid var(--md-outline-variant)",
-            }}>
-              <input ref={titleRef}
-                value={active.title}
-                onChange={e => updateNote("title", e.target.value)}
-                style={{
-                  flex: 1, border: "none", outline: "none", background: "transparent",
-                  fontFamily: "'Roboto',sans-serif", fontSize: 16, fontWeight: 500,
-                  color: "var(--md-on-surface)",
-                }}
-              />
+          <div className="flex flex-col bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-50">
+              <input ref={titleRef} value={active.title} onChange={(e) => updateField("title", e.target.value)}
+                className="flex-1 outline-none bg-transparent text-sm font-semibold text-slate-900" />
               <AnimatePresence>
                 {saved && (
                   <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    className="md-label-small"
-                    style={{ color: "#006D3A", display: "flex", alignItems: "center", gap: 4 }}>
-                    <Save style={{ width: 12, height: 12 }} /> Saved
+                    className="text-[10px] text-emerald-500 flex items-center gap-1">
+                    <Save className="w-3 h-3" /> Saved
                   </motion.span>
                 )}
               </AnimatePresence>
-              <button onClick={() => deleteNote(active.id)} className="md-state-layer"
-                style={{
-                  width: 36, height: 36, borderRadius: "var(--md-shape-full)", border: "none",
-                  background: "transparent", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-                  color: "var(--md-on-surface-variant)",
-                }}>
-                <Trash2 style={{ width: 16, height: 16 }} />
+              <button onClick={() => deleteNote(active.id)} className="p-1.5 rounded-lg hover:bg-red-50 transition-colors text-slate-300 hover:text-red-400">
+                <Trash2 className="w-4 h-4" />
               </button>
             </div>
-            {/* Body */}
-            <textarea ref={bodyRef}
-              value={active.body}
-              onChange={e => updateNote("body", e.target.value)}
+            <textarea value={active.body} onChange={(e) => updateField("body", e.target.value)}
               placeholder="Start writing…"
-              style={{
-                flex: 1, border: "none", outline: "none", resize: "none",
-                padding: "16px", background: "transparent", minHeight: 400,
-                fontFamily: "'Roboto',sans-serif", fontSize: 15, lineHeight: "26px",
-                color: "var(--md-on-surface)",
-              }}
-            />
-            {/* Footer */}
-            <div style={{ padding: "8px 16px", borderTop: "1px solid var(--md-outline-variant)" }}>
-              <span className="md-body-small" style={{ color: "var(--md-on-surface-variant)" }}>
+              className="flex-1 resize-none p-4 outline-none text-sm text-slate-700 leading-relaxed placeholder:text-slate-300"
+              style={{ minHeight: 380 }} />
+            <div className="px-4 py-2 border-t border-slate-50">
+              <span className="text-[10px] text-slate-300">
                 {active.body.trim().split(/\s+/).filter(Boolean).length} words · {active.body.length} chars
               </span>
             </div>
           </div>
         ) : (
-          <div style={{
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-            background: "var(--md-surface-container-lowest)", borderRadius: "var(--md-shape-lg)",
-            boxShadow: "var(--md-elevation-1)", padding: 48,
-          }}>
-            <div style={{ width: 64, height: 64, borderRadius: "var(--md-shape-xl)", background: ACCENT + "1A", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 16 }}>
-              <FileText style={{ width: 28, height: 28, color: ACCENT }} />
+          <div className="flex flex-col items-center justify-center bg-white rounded-2xl border border-slate-100 shadow-sm p-10">
+            <div className="w-14 h-14 rounded-2xl mb-4 flex items-center justify-center" style={{ background: `${accentColor}15` }}>
+              <FileText className="w-6 h-6" style={{ color: accentColor }} />
             </div>
-            <p className="md-body-medium" style={{ color: "var(--md-on-surface-variant)", marginBottom: 16 }}>Select a note or create one</p>
-            <button onClick={createNote} className="md-state-layer"
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                padding: "0 24px", height: 40, borderRadius: "var(--md-shape-full)",
-                border: "none", background: ACCENT, color: "#fff", cursor: "pointer",
-                fontFamily: "'Roboto',sans-serif", fontSize: 14, fontWeight: 500,
-              }}>
-              <Plus style={{ width: 16, height: 16 }} /> New note
+            <p className="text-slate-400 text-sm mb-4">Select a note or create one</p>
+            <button onClick={createNote} className="flex items-center gap-2 text-white text-sm font-medium px-5 py-2 rounded-xl" style={{ background: accentColor }}>
+              <Plus className="w-4 h-4" /> New note
             </button>
           </div>
         )}

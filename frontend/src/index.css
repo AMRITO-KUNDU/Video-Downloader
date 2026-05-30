@@ -1,94 +1,7 @@
 @import "tailwindcss";
 
-/* ── Material Design 3 — Baseline Color Tokens ──────────────────────────── */
-:root {
-  /* Primary tonal palette (seed: #6750A4) */
-  --md-primary:                  #6750A4;
-  --md-on-primary:               #FFFFFF;
-  --md-primary-container:        #EADDFF;
-  --md-on-primary-container:     #21005D;
-
-  /* Secondary */
-  --md-secondary:                #625B71;
-  --md-on-secondary:             #FFFFFF;
-  --md-secondary-container:      #E8DEF8;
-  --md-on-secondary-container:   #1D192B;
-
-  /* Tertiary */
-  --md-tertiary:                 #7D5260;
-  --md-on-tertiary:              #FFFFFF;
-  --md-tertiary-container:       #FFD8E4;
-  --md-on-tertiary-container:    #31111D;
-
-  /* Error */
-  --md-error:                    #B3261E;
-  --md-on-error:                 #FFFFFF;
-  --md-error-container:          #F9DEDC;
-  --md-on-error-container:       #410E0B;
-
-  /* Surface system */
-  --md-surface:                  #FFFBFE;
-  --md-surface-dim:              #DED8E1;
-  --md-surface-bright:           #FFFBFE;
-  --md-surface-container-lowest: #FFFFFF;
-  --md-surface-container-low:    #F7F2FA;
-  --md-surface-container:        #F3EDF7;
-  --md-surface-container-high:   #ECE6F0;
-  --md-surface-container-highest:#E6E0E9;
-  --md-surface-variant:          #E7E0EC;
-
-  /* On-surface */
-  --md-on-surface:               #1C1B1F;
-  --md-on-surface-variant:       #49454F;
-
-  /* Outline */
-  --md-outline:                  #79747E;
-  --md-outline-variant:          #CAC4D0;
-
-  /* Inverse */
-  --md-inverse-surface:          #313033;
-  --md-inverse-on-surface:       #F4EFF4;
-
-  /* M3 Elevation shadows */
-  --md-elevation-1: 0px 1px 2px rgba(0,0,0,0.3), 0px 1px 3px 1px rgba(0,0,0,0.15);
-  --md-elevation-2: 0px 1px 2px rgba(0,0,0,0.3), 0px 2px 6px 2px rgba(0,0,0,0.15);
-  --md-elevation-3: 0px 4px 8px 3px rgba(0,0,0,0.15), 0px 1px 3px rgba(0,0,0,0.3);
-
-  /* M3 State layers */
-  --md-state-hover:   rgba(103,80,164,0.08);
-  --md-state-pressed: rgba(103,80,164,0.12);
-  --md-state-focused: rgba(103,80,164,0.12);
-
-  /* Shape scale */
-  --md-shape-xs:   4px;
-  --md-shape-sm:   8px;
-  --md-shape-md:   12px;
-  --md-shape-lg:   16px;
-  --md-shape-xl:   28px;
-  --md-shape-full: 9999px;
-
-  /* Shadcn compat */
-  --background: 0 0% 100%;
-  --foreground: 264 5% 11%;
-  --card: 0 0% 100%;
-  --card-foreground: 264 5% 11%;
-  --border: 270 11% 80%;
-  --input: 270 11% 80%;
-  --primary: 264 35% 48%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 270 14% 90%;
-  --secondary-foreground: 264 5% 11%;
-  --muted: 270 14% 96%;
-  --muted-foreground: 264 10% 40%;
-  --destructive: 3 70% 41%;
-  --destructive-foreground: 0 0% 100%;
-  --ring: 264 35% 48%;
-  --radius: 12px;
-}
-
 @theme inline {
-  --font-sans: 'Roboto', ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: 'Roboto Mono', ui-monospace, monospace;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, sans-serif;
 
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
@@ -107,54 +20,42 @@
   --color-ring: hsl(var(--ring));
 }
 
+:root {
+  --background: 30 30% 97%;
+  --foreground: 15 12% 15%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 15 12% 15%;
+
+  --border: 20 20% 88%;
+  --input: 20 20% 88%;
+
+  --primary: 220 30% 18%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 10 50% 91%;
+  --secondary-foreground: 15 12% 15%;
+
+  --muted: 30 20% 94%;
+  --muted-foreground: 15 10% 45%;
+
+  --destructive: 3 91% 74%;
+  --destructive-foreground: 0 0% 100%;
+
+  --ring: 220 30% 18%;
+
+  --radius: 1rem;
+}
+
 @layer base {
-  *, *::before, *::after { box-sizing: border-box; }
   * { @apply border-border; }
   body {
-    background-color: var(--md-surface);
-    color: var(--md-on-surface);
-    font-family: 'Roboto', ui-sans-serif, system-ui, sans-serif;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    @apply bg-background text-foreground font-sans antialiased;
   }
 }
 
-/* ── M3 Typography scale ─────────────────────────────────────────────────── */
-.md-display-large   { font-size: 57px; line-height: 64px; font-weight: 400; letter-spacing: -0.25px; }
-.md-display-medium  { font-size: 45px; line-height: 52px; font-weight: 400; }
-.md-display-small   { font-size: 36px; line-height: 44px; font-weight: 400; }
-.md-headline-large  { font-size: 32px; line-height: 40px; font-weight: 400; }
-.md-headline-medium { font-size: 28px; line-height: 36px; font-weight: 400; }
-.md-headline-small  { font-size: 24px; line-height: 32px; font-weight: 400; }
-.md-title-large     { font-size: 22px; line-height: 28px; font-weight: 400; }
-.md-title-medium    { font-size: 16px; line-height: 24px; font-weight: 500; letter-spacing: 0.15px; }
-.md-title-small     { font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: 0.1px; }
-.md-body-large      { font-size: 16px; line-height: 24px; font-weight: 400; letter-spacing: 0.5px; }
-.md-body-medium     { font-size: 14px; line-height: 20px; font-weight: 400; letter-spacing: 0.25px; }
-.md-body-small      { font-size: 12px; line-height: 16px; font-weight: 400; letter-spacing: 0.4px; }
-.md-label-large     { font-size: 14px; line-height: 20px; font-weight: 500; letter-spacing: 0.1px; }
-.md-label-medium    { font-size: 12px; line-height: 16px; font-weight: 500; letter-spacing: 0.5px; }
-.md-label-small     { font-size: 11px; line-height: 16px; font-weight: 500; letter-spacing: 0.5px; }
-
-/* ── M3 Ripple / State layer ─────────────────────────────────────────────── */
-.md-state-layer {
-  position: relative;
-  overflow: hidden;
-}
-.md-state-layer::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: transparent;
-  border-radius: inherit;
-  transition: background 150ms;
-  pointer-events: none;
-}
-.md-state-layer:hover::after  { background: var(--md-state-hover); }
-.md-state-layer:active::after { background: var(--md-state-pressed); }
-
-/* ── Scrollbar (minimal M3 style) ───────────────────────────────────────── */
+/* Minimal scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--md-outline-variant); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: var(--md-outline); }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
