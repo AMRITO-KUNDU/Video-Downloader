@@ -10,6 +10,9 @@ import InstagramTool from "./pages/tools/instagram";
 import TranscriptTool from "./pages/tools/transcript";
 import SummarizerTool from "./pages/tools/summarizer";
 import BgRemoverTool from "./pages/tools/bgremover";
+import NotesTool from "./pages/tools/notes";
+import TodoTool from "./pages/tools/todo";
+import ConverterTool from "./pages/tools/converter";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -27,6 +30,9 @@ function Router() {
       <Route path="/tools/transcript" component={TranscriptTool} />
       <Route path="/tools/summarizer" component={SummarizerTool} />
       <Route path="/tools/bgremover" component={BgRemoverTool} />
+      <Route path="/tools/notes" component={NotesTool} />
+      <Route path="/tools/todo" component={TodoTool} />
+      <Route path="/tools/converter" component={ConverterTool} />
       <Route component={NotFound} />
     </Switch>
   );
