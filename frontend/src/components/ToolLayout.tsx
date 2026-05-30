@@ -15,62 +15,108 @@ export default function ToolLayout({
   icon,
   title,
   subtitle,
-  accentColor = "#6366f1",
+  accentColor = "var(--md-primary)",
   children,
 }: ToolLayoutProps) {
   const [, navigate] = useLocation();
 
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{
-        background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 60%, #e8f4fd 100%)",
-        fontFamily: "'Google Sans', Roboto, Arial, sans-serif",
-      }}
-    >
-      {/* Title bar */}
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--md-surface)" }}>
+
+      {/* ── M3 Top App Bar — Small variant ─────────────────────────────── */}
       <header
-        className="sticky top-0 z-50 flex items-center gap-3 px-4 sm:px-6 py-3"
         style={{
-          background: "rgba(255,255,255,0.88)",
-          backdropFilter: "blur(12px)",
-          borderBottom: "1px solid rgba(226,232,240,0.8)",
+          height: 64,
+          display: "flex",
+          alignItems: "center",
+          padding: "0 4px",
+          background: "var(--md-surface)",
+          borderBottom: "1px solid var(--md-outline-variant)",
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
+          gap: 4,
         }}
       >
+        {/* M3 Icon Button — Navigation back */}
         <button
           onClick={() => navigate("/")}
-          className="flex items-center justify-center w-8 h-8 rounded-xl hover:bg-slate-100 transition-colors text-slate-500"
+          className="md-state-layer"
+          style={{
+            width: 48,
+            height: 48,
+            borderRadius: "var(--md-shape-full)",
+            border: "none",
+            background: "transparent",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--md-on-surface-variant)",
+            flexShrink: 0,
+          }}
+          title="Back to home"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft style={{ width: 24, height: 24 }} />
         </button>
 
+        {/* Leading icon — tonal container */}
         <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center text-white shrink-0"
-          style={{ background: accentColor }}
+          style={{
+            width: 32,
+            height: 32,
+            borderRadius: "var(--md-shape-sm)",
+            background: "var(--md-primary-container)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            color: "var(--md-on-primary-container)",
+          }}
         >
           {icon}
         </div>
 
-        <div className="flex items-baseline gap-1.5 min-w-0">
-          <span className="font-bold text-slate-900 text-sm sm:text-base truncate">{title}</span>
-          {subtitle && (
-            <span className="text-sm text-slate-400 hidden sm:inline">{subtitle}</span>
-          )}
+        {/* Title — Title Large (22sp, Roboto 400) */}
+        <div style={{ flex: 1, overflow: "hidden", padding: "0 4px" }}>
+          <span
+            className="md-title-large"
+            style={{
+              color: "var(--md-on-surface)",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              display: "block",
+            }}
+          >
+            {title}
+            {subtitle && (
+              <span
+                className="md-title-large"
+                style={{ color: "var(--md-on-surface-variant)", fontWeight: 400, marginLeft: 8 }}
+              >
+                {subtitle}
+              </span>
+            )}
+          </span>
         </div>
 
-        <div className="ml-auto flex items-center gap-1.5 text-slate-300">
-          <Zap className="w-3.5 h-3.5 text-violet-400" fill="currentColor" />
-          <span className="text-[11px] font-medium text-slate-400 hidden sm:inline">SwiftTools</span>
+        {/* Trailing brand mark */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, paddingRight: 16, flexShrink: 0 }}>
+          <Zap style={{ width: 16, height: 16, color: "var(--md-primary)" }} fill="currentColor" />
+          <span className="md-label-medium" style={{ color: "var(--md-on-surface-variant)" }}>
+            SwiftTools
+          </span>
         </div>
       </header>
 
-      {/* Content */}
-      <main className="flex-1 flex flex-col px-4 py-8 pb-16">
+      {/* ── Page content ───────────────────────────────────────────────── */}
+      <main style={{ flex: 1, padding: "24px 16px 64px" }}>
         <motion.div
-          initial={{ opacity: 0, y: 16 }}
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full max-w-2xl mx-auto flex flex-col gap-5"
+          transition={{ duration: 0.3, ease: [0.2, 0, 0, 1] }}
+          style={{ maxWidth: 640, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}
         >
           {children}
         </motion.div>

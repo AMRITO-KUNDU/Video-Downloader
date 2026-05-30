@@ -1,18 +1,20 @@
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Zap, Download, Facebook, Image, FileText, Sparkles } from "lucide-react";
+import { Zap, FileText, Image } from "lucide-react";
 import { FaYoutube, FaFacebook, FaInstagram } from "react-icons/fa";
+import { Sparkles } from "lucide-react";
 
+/* ── Tool definitions ── */
 const TOOLS = [
   {
     id: "youtube",
     path: "/tools/youtube",
     name: "YouTube",
     subtitle: "Downloader",
-    description: "Download HD videos & MP3 audio from YouTube",
-    icon: FaYoutube,
-    gradient: "from-red-500 to-rose-600",
-    ring: "ring-red-200",
+    description: "Download HD videos and MP3 audio from any public YouTube video.",
+    Icon: FaYoutube,
+    containerColor: "#FFDAD6",
+    iconColor: "#C00000",
     badge: "Video",
   },
   {
@@ -20,10 +22,10 @@ const TOOLS = [
     path: "/tools/facebook",
     name: "Facebook",
     subtitle: "Video",
-    description: "Save videos from Facebook and Watch",
-    icon: FaFacebook,
-    gradient: "from-blue-500 to-blue-700",
-    ring: "ring-blue-200",
+    description: "Save videos from Facebook and Watch in HD or SD quality.",
+    Icon: FaFacebook,
+    containerColor: "#D9E2FF",
+    iconColor: "#0040C4",
     badge: "Video",
   },
   {
@@ -31,10 +33,10 @@ const TOOLS = [
     path: "/tools/instagram",
     name: "Instagram",
     subtitle: "Video",
-    description: "Download reels, posts and videos from Instagram",
-    icon: FaInstagram,
-    gradient: "from-pink-500 to-purple-600",
-    ring: "ring-pink-200",
+    description: "Download reels, posts and videos from public Instagram accounts.",
+    Icon: FaInstagram,
+    containerColor: "#FFD8E4",
+    iconColor: "#9E0059",
     badge: "Video",
   },
   {
@@ -42,10 +44,10 @@ const TOOLS = [
     path: "/tools/transcript",
     name: "Transcript",
     subtitle: "Generator",
-    description: "Extract full transcripts from any YouTube video",
-    icon: FileText,
-    gradient: "from-emerald-500 to-teal-600",
-    ring: "ring-emerald-200",
+    description: "Extract full captions and timestamped transcripts from YouTube videos.",
+    Icon: FileText,
+    containerColor: "#BBEDCB",
+    iconColor: "#006D3A",
     badge: "AI",
   },
   {
@@ -53,10 +55,10 @@ const TOOLS = [
     path: "/tools/summarizer",
     name: "AI",
     subtitle: "Summarizer",
-    description: "Get an AI-powered summary of any YouTube video",
-    icon: Sparkles,
-    gradient: "from-violet-500 to-purple-700",
-    ring: "ring-violet-200",
+    description: "Get an intelligent summary of any YouTube video via its transcript.",
+    Icon: Sparkles,
+    containerColor: "#EADDFF",
+    iconColor: "#6750A4",
     badge: "AI",
   },
   {
@@ -64,149 +66,217 @@ const TOOLS = [
     path: "/tools/bgremover",
     name: "Background",
     subtitle: "Remover",
-    description: "Remove image backgrounds instantly with local AI",
-    icon: Image,
-    gradient: "from-cyan-500 to-sky-600",
-    ring: "ring-cyan-200",
+    description: "Remove image backgrounds instantly with a local AI model — fully private.",
+    Icon: Image,
+    containerColor: "#B2EBEB",
+    iconColor: "#006A6A",
     badge: "AI",
   },
 ] as const;
 
 const containerVariants = {
   hidden: {},
-  show: { transition: { staggerChildren: 0.07 } },
+  show: { transition: { staggerChildren: 0.06 } },
 };
-
 const cardVariants = {
-  hidden: { opacity: 0, y: 24 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.4, ease: [0.22, 1, 0.36, 1] } },
+  hidden: { opacity: 0, y: 20 },
+  show: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.35, ease: [0.2, 0, 0, 1] },
+  },
 };
 
 export default function Home() {
   const [, navigate] = useLocation();
 
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{
-        background: "linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e8f4fd 100%)",
-        fontFamily: "'Google Sans', Roboto, Arial, sans-serif",
-      }}
-    >
-      {/* Title bar */}
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--md-surface)" }}>
+
+      {/* ── M3 Top App Bar (small) ──────────────────────────────────────── */}
       <header
-        className="sticky top-0 z-50 flex items-center justify-between px-6 py-3"
         style={{
-          background: "rgba(255,255,255,0.85)",
-          backdropFilter: "blur(12px)",
-          borderBottom: "1px solid rgba(226,232,240,0.8)",
+          height: 64,
+          display: "flex",
+          alignItems: "center",
+          padding: "0 16px",
+          background: "var(--md-surface)",
+          borderBottom: "1px solid var(--md-outline-variant)",
+          position: "sticky",
+          top: 0,
+          zIndex: 10,
         }}
       >
-        <div className="flex items-center gap-2.5">
-          <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center"
-            style={{ background: "linear-gradient(135deg, #6366f1, #8b5cf6)" }}
-          >
-            <Zap className="w-4 h-4 text-white" fill="white" />
-          </div>
-          <div>
-            <span className="font-bold text-slate-900 text-base tracking-tight">SwiftTools</span>
-            <span className="hidden sm:inline text-xs text-slate-400 ml-2">by yt-dlp</span>
-          </div>
+        {/* Leading icon */}
+        <div
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: "var(--md-shape-md)",
+            background: "var(--md-primary-container)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginRight: 12,
+            flexShrink: 0,
+          }}
+        >
+          <Zap style={{ width: 20, height: 20, color: "var(--md-on-primary-container)" }} fill="currentColor" />
         </div>
-        <span className="text-xs text-slate-400 hidden md:block">Free · No sign-in required</span>
+
+        {/* Title — Title Large (22sp) */}
+        <span
+          className="md-title-large"
+          style={{ color: "var(--md-on-surface)", flex: 1 }}
+        >
+          SwiftTools
+        </span>
+
+        {/* Trailing chip */}
+        <span
+          className="md-label-medium"
+          style={{
+            padding: "4px 12px",
+            borderRadius: "var(--md-shape-full)",
+            border: "1px solid var(--md-outline-variant)",
+            color: "var(--md-on-surface-variant)",
+          }}
+        >
+          Free
+        </span>
       </header>
 
-      {/* Hero */}
-      <div className="text-center pt-14 pb-10 px-4">
-        <motion.div
-          initial={{ opacity: 0, y: -12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
+      {/* ── Hero ──────────────────────────────────────────────────────────── */}
+      <motion.section
+        initial={{ opacity: 0, y: -8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.2, 0, 0, 1] }}
+        style={{ textAlign: "center", padding: "48px 24px 32px" }}
+      >
+        {/* Assist chip — M3 style */}
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "6px 16px",
+            borderRadius: "var(--md-shape-full)",
+            border: "1px solid var(--md-outline-variant)",
+            background: "var(--md-surface-container-low)",
+            marginBottom: 20,
+          }}
         >
-          <div
-            className="inline-flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-full mb-5"
-            style={{
-              background: "linear-gradient(135deg, #ede9fe, #dbeafe)",
-              color: "#6d28d9",
-              border: "1px solid #c4b5fd",
-            }}
-          >
-            <Zap className="w-3 h-3" fill="currentColor" />
+          <Zap style={{ width: 14, height: 14, color: "var(--md-primary)" }} fill="currentColor" />
+          <span className="md-label-large" style={{ color: "var(--md-on-surface-variant)" }}>
             6 powerful tools, all free
-          </div>
-          <h1 className="text-4xl sm:text-5xl font-bold text-slate-900 mb-3 tracking-tight">
-            Your toolkit,{" "}
-            <span
-              style={{
-                background: "linear-gradient(135deg, #6366f1, #8b5cf6, #ec4899)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-              }}
-            >
-              one click away
-            </span>
-          </h1>
-          <p className="text-slate-500 text-lg max-w-md mx-auto">
-            Download videos, generate transcripts, summarize content, and remove backgrounds — all in your browser.
-          </p>
-        </motion.div>
-      </div>
+          </span>
+        </div>
 
-      {/* App grid */}
-      <main className="flex-1 px-4 pb-16">
+        {/* Headline — Headline Large (32sp) */}
+        <h1
+          className="md-headline-large"
+          style={{ color: "var(--md-on-surface)", marginBottom: 12, maxWidth: 480, margin: "0 auto 12px" }}
+        >
+          Your toolkit,{" "}
+          <span style={{ color: "var(--md-primary)" }}>one tap away</span>
+        </h1>
+
+        {/* Body Large */}
+        <p
+          className="md-body-large"
+          style={{ color: "var(--md-on-surface-variant)", maxWidth: 420, margin: "0 auto" }}
+        >
+          Download videos, extract transcripts, summarize content, and remove backgrounds.
+        </p>
+      </motion.section>
+
+      {/* ── App grid ──────────────────────────────────────────────────────── */}
+      <main style={{ flex: 1, padding: "0 16px 48px" }}>
         <motion.div
-          className="grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-5 max-w-3xl mx-auto"
           variants={containerVariants}
           initial="hidden"
           animate="show"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+            gap: 16,
+            maxWidth: 920,
+            margin: "0 auto",
+          }}
         >
           {TOOLS.map((tool) => {
-            const Icon = tool.icon;
+            const Icon = tool.Icon;
             return (
               <motion.button
                 key={tool.id}
                 variants={cardVariants}
                 onClick={() => navigate(tool.path)}
-                whileHover={{ y: -5, scale: 1.02 }}
-                whileTap={{ scale: 0.97 }}
-                className="text-left rounded-2xl overflow-hidden cursor-pointer focus:outline-none group"
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.98 }}
+                className="md-state-layer"
                 style={{
-                  background: "white",
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.06)",
-                  transition: "box-shadow 0.2s",
+                  textAlign: "left",
+                  background: "var(--md-surface-container-lowest)",
+                  borderRadius: "var(--md-shape-lg)",
+                  boxShadow: "var(--md-elevation-1)",
+                  border: "none",
+                  cursor: "pointer",
+                  padding: 20,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                  transition: "box-shadow 200ms ease",
                 }}
                 onMouseEnter={(e) => {
-                  (e.currentTarget as HTMLElement).style.boxShadow =
-                    "0 4px 12px rgba(0,0,0,0.08), 0 12px 32px rgba(0,0,0,0.1)";
+                  (e.currentTarget as HTMLElement).style.boxShadow = "var(--md-elevation-2)";
                 }}
                 onMouseLeave={(e) => {
-                  (e.currentTarget as HTMLElement).style.boxShadow =
-                    "0 1px 4px rgba(0,0,0,0.06), 0 4px 16px rgba(0,0,0,0.06)";
+                  (e.currentTarget as HTMLElement).style.boxShadow = "var(--md-elevation-1)";
                 }}
               >
-                {/* Card header with gradient */}
-                <div
-                  className={`h-28 flex flex-col items-center justify-center gap-2 bg-gradient-to-br ${tool.gradient} relative overflow-hidden`}
-                >
-                  {/* Decorative circles */}
-                  <div className="absolute -top-4 -right-4 w-20 h-20 rounded-full bg-white opacity-10" />
-                  <div className="absolute -bottom-6 -left-6 w-24 h-24 rounded-full bg-white opacity-10" />
-                  <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center">
-                    <Icon className="w-6 h-6 text-white" />
+                {/* Icon + badge row */}
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+                  {/* Tonal icon container — M3 spec: 48×48 rounded square */}
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: "var(--md-shape-md)",
+                      background: tool.containerColor,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Icon style={{ width: 24, height: 24, color: tool.iconColor }} />
                   </div>
-                  <span className="text-[10px] font-semibold uppercase tracking-widest text-white/70">
+
+                  {/* Assist chip — badge */}
+                  <span
+                    className="md-label-small"
+                    style={{
+                      padding: "2px 10px",
+                      borderRadius: "var(--md-shape-full)",
+                      background: "var(--md-secondary-container)",
+                      color: "var(--md-on-secondary-container)",
+                    }}
+                  >
                     {tool.badge}
                   </span>
                 </div>
 
-                {/* Card body */}
-                <div className="p-4">
-                  <p className="text-[13px] font-bold text-slate-900 leading-tight">
-                    {tool.name}
-                    <span className="font-normal text-slate-500 ml-1">{tool.subtitle}</span>
+                {/* Text content */}
+                <div>
+                  {/* Title Medium */}
+                  <p className="md-title-medium" style={{ color: "var(--md-on-surface)", marginBottom: 4 }}>
+                    {tool.name}{" "}
+                    <span style={{ color: "var(--md-on-surface-variant)", fontWeight: 400 }}>
+                      {tool.subtitle}
+                    </span>
                   </p>
-                  <p className="text-[11px] text-slate-400 mt-1 leading-snug line-clamp-2">
+                  {/* Body Small */}
+                  <p className="md-body-small" style={{ color: "var(--md-on-surface-variant)" }}>
                     {tool.description}
                   </p>
                 </div>
@@ -216,9 +286,11 @@ export default function Home() {
         </motion.div>
       </main>
 
-      {/* Footer */}
-      <footer className="text-center py-6 text-xs text-slate-400">
-        SwiftTools · powered by yt-dlp &amp; rembg · free &amp; open source
+      {/* ── Footer ────────────────────────────────────────────────────────── */}
+      <footer style={{ textAlign: "center", padding: "16px 24px 32px" }}>
+        <p className="md-body-small" style={{ color: "var(--md-on-surface-variant)" }}>
+          SwiftTools · powered by yt-dlp &amp; rembg · free &amp; open-source
+        </p>
       </footer>
     </div>
   );
