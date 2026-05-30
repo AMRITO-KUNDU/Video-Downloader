@@ -765,6 +765,175 @@ def _download_mp3(url: str, platform: str):
         return jsonify({'error': _classify_error(e)}), 500
 
 
+# ── YouTube video-ID helper ───────────────────────────────────────────────────
+_YT_ID_RE = re.compile(
+    r'(?:youtube\.com/(?:watch\?(?:.*&)?v=|embed/|v/|shorts/)|youtu\.be/)([a-zA-Z0-9_-]{11})',
+    re.IGNORECASE,
+)
+
+
+def _extract_yt_id(url: str):
+    m = _YT_ID_RE.search(url or '')
+    return m.group(1) if m else None
+
+
+# ── Extractive summariser (no ML, no external deps) ───────────────────────────
+import math as _math
+from collections import Counter as _Counter
+
+_STOPWORDS = {
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'this', 'that', 'these', 'those', 'it', 'its',
+    'we', 'you', 'he', 'she', 'they', 'i', 'my', 'our', 'your', 'his',
+    'her', 'their', 'so', 'if', 'as', 'up', 'out', 'about', 'into', 'than',
+    'then', 'when', 'where', 'who', 'which', 'what', 'how', 'all', 'just',
+    'also', 'not', 'no', 'can', 'like', 'get', 'got', 'go', 'going', 'know',
+    'think', 'want', 'really', 'very', 'even', 'one', 'two', 'now', 'here',
+}
+
+
+def _extractive_summary(text: str, num_sentences: int = 8) -> str:
+    sent_re = re.compile(r'(?<=[.!?])\s+(?=[A-Z])')
+    sentences = [s.strip() for s in sent_re.split(text.strip()) if len(s.strip()) > 20]
+    if not sentences:
+        return text[:2000]
+    if len(sentences) <= num_sentences:
+        return ' '.join(sentences)
+
+    words = re.findall(r'\b[a-z]{3,}\b', text.lower())
+    freq = _Counter(w for w in words if w not in _STOPWORDS)
+    max_freq = max(freq.values(), default=1)
+    freq = {w: v / max_freq for w, v in freq.items()}
+
+    scores = []
+    for s in sentences:
+        s_words = re.findall(r'\b[a-z]{3,}\b', s.lower())
+        denom = max(len(s_words), 1)
+        score = sum(freq.get(w, 0) for w in s_words if w not in _STOPWORDS) / denom
+        scores.append(score)
+
+    top_idx = sorted(
+        sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)[:num_sentences]
+    )
+    return ' '.join(sentences[i] for i in top_idx)
+
+
+# ── Transcript endpoint ────────────────────────────────────────────────────────
+@app.route('/api/transcript', methods=['POST'])
+@limiter.limit('10 per minute')
+def get_transcript():
+    data = request.get_json()
+    url = (data or {}).get('url', '').strip()
+
+    if not url:
+        return jsonify({'error': 'URL is required.'}), 400
+
+    video_id = _extract_yt_id(url)
+    if not video_id:
+        return jsonify({'error': 'Please enter a valid YouTube URL.'}), 400
+
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
+
+        transcript_list = YouTubeTranscriptApi.get_transcript(
+            video_id, languages=['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']
+        )
+        entries = [{'text': e['text'].replace('\n', ' '), 'start': round(e['start'], 1)} for e in transcript_list]
+        full_text = ' '.join(e['text'] for e in entries)
+
+        cached = _info_cache.get(url)
+        title = (cached or {}).get('response', {}).get('title', '')
+
+        return jsonify({
+            'video_id': video_id,
+            'title': title,
+            'entries': entries,
+            'full_text': full_text,
+            'word_count': len(full_text.split()),
+        })
+    except Exception as exc:
+        msg = str(exc).lower()
+        if 'no transcript' in msg or 'notranscript' in msg.replace(' ', ''):
+            return jsonify({'error': 'No transcript is available for this video. It may not have captions.'}), 404
+        if 'disabled' in msg:
+            return jsonify({'error': 'Transcripts are disabled for this video.'}), 404
+        if 'could not retrieve' in msg or 'video unavailable' in msg:
+            return jsonify({'error': 'Could not retrieve transcript — the video may be private or unavailable.'}), 404
+        logger.exception('Transcript error for %s', video_id)
+        return jsonify({'error': 'Failed to fetch transcript. Please try again.'}), 500
+
+
+# ── Summarise endpoint ─────────────────────────────────────────────────────────
+@app.route('/api/summarize', methods=['POST'])
+@limiter.limit('5 per minute')
+def summarize_video():
+    data = request.get_json()
+    url = (data or {}).get('url', '').strip()
+    num_sentences = max(3, min(int((data or {}).get('sentences', 8)), 20))
+
+    if not url:
+        return jsonify({'error': 'URL is required.'}), 400
+
+    video_id = _extract_yt_id(url)
+    if not video_id:
+        return jsonify({'error': 'Please enter a valid YouTube URL.'}), 400
+
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
+
+        transcript_list = YouTubeTranscriptApi.get_transcript(
+            video_id, languages=['en', 'en-US', 'en-GB', 'en-CA', 'en-AU']
+        )
+        full_text = ' '.join(e['text'].replace('\n', ' ') for e in transcript_list)
+        summary = _extractive_summary(full_text, num_sentences)
+
+        return jsonify({
+            'video_id': video_id,
+            'summary': summary,
+            'original_words': len(full_text.split()),
+            'summary_words': len(summary.split()),
+        })
+    except Exception as exc:
+        msg = str(exc).lower()
+        if 'no transcript' in msg or 'notranscript' in msg.replace(' ', ''):
+            return jsonify({'error': 'No transcript is available for this video — cannot summarise.'}), 404
+        if 'disabled' in msg:
+            return jsonify({'error': 'Transcripts are disabled for this video.'}), 404
+        logger.exception('Summarise error for %s', video_id)
+        return jsonify({'error': 'Failed to summarise. Please try again.'}), 500
+
+
+# ── Background-removal endpoint ────────────────────────────────────────────────
+@app.route('/api/bgremove', methods=['POST'])
+@limiter.limit('6 per minute')
+def remove_background():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image file provided.'}), 400
+
+    file = request.files['image']
+    img_bytes = file.read()
+
+    if len(img_bytes) > 15 * 1024 * 1024:
+        return jsonify({'error': 'Image too large — please use an image under 15 MB.'}), 413
+
+    try:
+        from rembg import remove as rembg_remove  # type: ignore
+        output = rembg_remove(img_bytes)
+        return Response(
+            output,
+            mimetype='image/png',
+            headers={
+                'Content-Disposition': 'attachment; filename="swifttools_nobg.png"',
+                'Cache-Control': 'no-store',
+            },
+        )
+    except Exception as exc:
+        logger.exception('bgremove error: %s', exc)
+        return jsonify({'error': 'Background removal failed. Please try a different image.'}), 500
+
+
 # ── Frontend SPA ──────────────────────────────────────────────────────────────
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')

@@ -5,3 +5,6 @@ yt-dlp>=2024.1.1
 gunicorn>=21.2.0
 requests>=2.32.0
 instaloader>=4.11
+youtube-transcript-api>=0.6.3
+rembg>=2.0.57
+Pillow>=10.0.0
